@@ -12,7 +12,7 @@ recho() {
 connect_wifi() {
   local ADAPTER_NAME WIFI_DEVICE_NAME NETWORK_NAME NETWORK_PASSWORD
 
-  yecho ">>> Conection to WiFi"
+  yecho ">>> Conecting to WiFi"
   echo
   while true; do
     iwctl adapter list
@@ -107,25 +107,8 @@ prepare_disk() {
 
   #Init LUKS
   yecho ">>> Setting up LUKS encryption on root"
-  while true; do
-    read -rsp "Enter password for LUKS: " LUKS_PASS1
-	echo
-    read -rsp "Verify password: " LUKS_PASS2
-	echo
-	if [[ "$LUKS_PASS1" == "$LUKS_PASS2" ]]; then
-	  break
-	else
-	  recho "!!! Passwords are not equal"
-	fi
-  done
-  
-  TMPFILE=$(mktemp)
-  chmod 600 "$TMPFILE"
-  echo "$LUKS_PASS1" > "$TMPFILE"
-  
-  cryptsetup luksFormat --batch-mode "$ROOT_PART" --key-file "$TMPFILE"
-  cryptsetup open --key-file "$TMPFILE" "$ROOT_PART" cryptlvm
-  rm -f "$TMPFILE"
+  cryptsetup luksFormat "$ROOT_PART"
+  cryptsetup open "$ROOT_PART" cryptlvm
 
   #Create lvm volumes
   yecho ">>> Creating LVM volumes"
@@ -384,6 +367,12 @@ yecho ">>> Installing desktop environment"
 # haruna: mediaplayer
 arch-chroot /mnt pacman -S --needed plasma-desktop plasma-pa plasma-nm plasma-systemmonitor plasma-firewall kscreen kwalletmanager kwallet-pam bluedevil powerdevil power-profiles-daemon kdeplasma-addons xdg-desktop-portal-kde kde-gtk-config breeze-gtk cups print-manager konsole dolphin ffmpegthumbs kate okular gwenview ark spectacle haruna
 
+#environment manager
+yecho ">>> Installing environment manager"
+arch-chroot /mnt pacman -S --needed sddm
+arch-chroot /mnt systemctl enable sddm
+arch-chroot /mnt pacman -S --needed sddm-kcm
+
 #flatpak
 yecho ">>> Installing flatpak"
 arch-chroot /mnt pacman -S --needed flatpak
@@ -393,16 +382,11 @@ arch-chroot /mnt flatpak remote-add --if-not-exists flathub https://flathub.org/
 yecho ">>> Installing zen browser"
 arch-chroot /mnt flatpak install flathub app.zen_browser.zen
 
-#environment manager
-yecho ">>> Installing environment manager"
-arch-chroot /mnt pacman -S --needed sddm
-arch-chroot /mnt systemctl enable sddm
-arch-chroot /mnt pacman -S --needed sddm-kcm
 }
 
 install_desktop
 
-read -rp "Reboot? (y/n)" CONFIRM
+read -rp "Reboot? (y/n) " CONFIRM
 if [[ "$CONFIRM" == "y" ]]; then
   swapoff --all
   umount -R /mnt
