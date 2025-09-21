@@ -311,10 +311,6 @@ install_linux() {
     arch-chroot /mnt pacman -S tlp tlp-rdw powertop
   fi
   
-  #Install firewall
-  echo ">>> Installing firewall...."
-  arch-chroot /mnt pacman -S iptables-nft ufw
-  
   #Install video drivers
   echo ">>> Installing vide drivers..."
   echo "[multilib]" >> /mnt/etc/pacman.conf
@@ -323,23 +319,22 @@ install_linux() {
   
   read -rp "Do you need Intel video driver? {y/n): " NEED_INTEL_VIDEO
   if [[ "$NEED_INTEL_VIDEO" == "y" ]]; then
-    arch-chroot /mnt pacman -S mesa lib32-mesa vulkan-intel lib32-vulkan-intel xf86-video-intel
+    arch-chroot /mnt pacman -S mesa lib32-mesa vulkan-intel lib32-vulkan-intel
   fi
   
   read -rp "Do you need AMD video driver? {y/n): " NEED_AMD_VIDEO
   if [[ "$NEED_AMD_VIDEO" == "y" ]]; then
-    arch-chroot /mnt pacman -S linux-firmware-amdgpu mesa lib32-mesa vulkan-radeon lib32-vulkan-radeon xf86-video-amdgpu
+    arch-chroot /mnt pacman -S linux-firmware-amdgpu mesa lib32-mesa vulkan-radeon lib32-vulkan-radeon libva-mesa-driver
   fi
   
   read -rp "Do you need Nvidia video driver? {y/n): " NEED_NVIDIA_VIDEO
   if [[ "$NEED_NVIDIA_VIDEO" == "y" ]]; then
-    arch-chroot /mnt pacman -S mesa lib32-mesa vulkan-nouveau lib32-vulkan-nouveau xf86-video-nouveau
+    arch-chroot /mnt pacman -S mesa lib32-mesa vulkan-nouveau lib32-vulkan-nouveau
   fi
   
   #Enable services
   echo ">>> Enabling services..."
   arch-chroot /mnt systemctl enable NetworkManager #network
-  arch-chroot /mnt ufw enable #firewall
   arch-chroot /mnt systemctl enable fstrim.timer #ssd optimisation
   arch-chroot /mnt sysctl vm.swappiness=0 #ssd optimisation
   
@@ -357,12 +352,41 @@ install_linux() {
 install_linux
 
 install_desktop() {
-local 
-
 echo ">>> Installing desktop environment..."
+# plasma-desktop: the barebones plasma environment.
+# plasma-pa: the KDE audio applet.
+# plasma-nm: the KDE network applet.
+# plasma-systemmonitor: the KDE task manager.
+# plasma-firewall: the KDE firewall.
+# kscreen: the KDE display configurator.
+# kwalletmanager: manage secure vaults ( needed to store the passwords of local applications in an encrypted format ). This also installs kwallet as a dependency, so I don't need to specify it.
+# kwallet-pam: automatically unlocks secure vault upon login ( without this, each time the wallet gets queried it asks for your password to unlock it ).
+# bluedevil: the KDE bluetooth manager.
+# powerdevil: the KDE power manager.
+# power-profiles-daemon: adds 3 power profiles selectable from powerdevil ( power saving, balanced, performance ). Make sure that its service is enabled and running ( it should be ).
+# kdeplasma-addons: some useful addons.
+# xdg-desktop-portal-kde: better integrates the plasma desktop in various windows like file pickers.
+# xwaylandvideobridge: exposes Wayland windows to XWayland-using screen sharing apps ( useful when screen sharing on discord, but also in other instances ).
+# kde-gtk-config: the native settings integration to manage GTK theming.
+# breeze-gtk: the breeze GTK theme.
+# cups, print-manager: the CUPS print service and the KDE front-end.
+# konsole: the KDE terminal.
+# dolphin: the KDE file manager.
+# ffmpegthumbs: video thumbnailer for dolphin.
+# kate: the KDE text editor.
+# okular: the KDE pdf viewer.
+# gwenview: the KDE image viewer.
+# ark: the KDE archive manager.
+# pinta: a paint.net clone written in GTK.
+# spectacle: the KDE screenshot tool.
+# haruna: mediaplayer
+arch-chroot /mnt pacman -S plasma-desktop plasma-pa plasma-nm plasma-systemmonitor plasma-firewall kscreen kwalletmanager kwallet-pam bluedevil powerdevil power-profiles-daemon kdeplasma-addons xdg-desktop-portal-kde xwaylandvideobridge kde-gtk-config breeze-gtk cups print-manager konsole dolphin ffmpegthumbs kate okular gwenview ark pinta spectacle haruna
 
 
+#environment manager
+arch-chroot /mnt pacman -S sddm
+arch-chroot /mnt systemctl enable sddm
+arch-chroot /mnt pacman -S --needed sddm-kcm
 }
 
 install_desktop
-
