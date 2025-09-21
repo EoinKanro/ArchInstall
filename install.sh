@@ -1,20 +1,28 @@
 set -euo pipefail
 
+yecho() {
+  echo -e "\e[33m$1\e[0m"
+}
+
+recho() {
+  echo -e "\e[31m$1\e[0m"
+}
+
 #WiFi connection
 connect_wifi() {
   local ADAPTER_NAME WIFI_DEVICE_NAME NETWORK_NAME NETWORK_PASSWORD
 
-  echo ">>> Conection to WiFi..."
+  yecho ">>> Conection to WiFi"
   echo
   while true; do
     iwctl adapter list
     read -rp "Enter adapter name (example: phy0): " ADAPTER_NAME
   
     if iwctl adapter $ADAPTER_NAME set-property Powered on; then
-      echo ">>> Adapter $ADAPTER_NAME switched on"
+      yecho ">>> Adapter $ADAPTER_NAME switched on"
       break
     else
-      echo "!!! Wrong name of adapter"
+      recho "!!! Wrong name of adapter"
     fi
   done
 
@@ -23,10 +31,10 @@ connect_wifi() {
     read -rp "Enter device name (example: wlan0): " WIFI_DEVICE_NAME
   
     if iwctl device $WIFI_DEVICE_NAME set-property Powered on; then
-      echo ">>> Device $WIFI_DEVICE_NAME switched on"
+      yecho ">>> Device $WIFI_DEVICE_NAME switched on"
       break
     else
-      echo "!!! Wrong name of device"
+      recho "!!! Wrong name of device"
     fi
   done
 
@@ -38,16 +46,16 @@ connect_wifi() {
 	echo
   
     if iwctl --passphrase "$NETWORK_PASSWORD" station "$WIFI_DEVICE_NAME" connect "$NETWORK_NAME"; then
-      echo ">>> Connected initiated"
+      yecho ">>> Connected initiated"
 	  
-	  echo ">>> Waiting for $WIFI_DEVICE_NAME to get an IP..."
+	  yecho ">>> Waiting for $WIFI_DEVICE_NAME to get an IP..."
       while ! ip addr show "$WIFI_DEVICE_NAME" | grep -q "inet "; do
         sleep 1
 	  done
-      echo ">>> Connected to $NETWORK_NAME!"
+      yecho ">>> Connected to $NETWORK_NAME!"
       break
     else
-      echo "!!! Failed to connect to $NETWORK_NAME. Try again."
+      recho "!!! Failed to connect to $NETWORK_NAME. Try again."
     fi
   done
 }
@@ -55,10 +63,10 @@ connect_wifi() {
 #Check network
 while true; do
   if ping -c 3 archlinux.org; then
-    echo ">>> Internet is up!"
+    yecho ">>> Internet is up!"
     break
   else
-    echo "!!! No Internet connection"
+    recho "!!! No Internet connection"
     connect_wifi
   fi
 done
@@ -67,9 +75,9 @@ done
 prepare_disk() {
   local DISK_NAME DISK CONFIRM EFI_PART VG0_PART VG0_ROOT_PART VG0_HOME_PART VG0_SWAP_PART LUKS_PASS1 LUKS_PASS2 TMPFILE
   
-  echo ">>> Creating disk partitions..."
+  yecho ">>> Creating disk partitions"
   
-  echo ">>> Available disks:"
+  yecho ">>> Available disks:"
   lsblk -dpno NAME,SIZE,MODEL
   echo
   read -rp "Enter disk name (example: sdb): " DISK_NAME
@@ -78,15 +86,15 @@ prepare_disk() {
   # Confirm
   read -rp "!!! All data on $DISK will be erased. Continue? (y/n): " CONFIRM
   if [[ "$CONFIRM" != "y" ]]; then 
-    echo "Aborted."
+    yecho "Aborted."
 	exit 1;
   fi
   
-  echo ">>> Erasing disk $DISK..."
+  yecho ">>> Erasing disk $DISK"
   wipefs -a "$DISK"
   sgdisk --zap-all "$DISK"
 
-  echo ">>> Creating partitions..."
+  yecho ">>> Creating partitions"
   parted -s "$DISK" mklabel gpt
   # EFI 1GB
   parted -s "$DISK" mkpart ESP fat32 1MiB 1025MiB
@@ -98,7 +106,7 @@ prepare_disk() {
   ROOT_PART="${DISK}2"
 
   #Init LUKS
-  echo ">>> Setting up LUKS encryption on root..."
+  yecho ">>> Setting up LUKS encryption on root"
   while true; do
     read -rsp "Enter password for LUKS: " LUKS_PASS1
 	echo
@@ -107,7 +115,7 @@ prepare_disk() {
 	if [[ "$LUKS_PASS1" == "$LUKS_PASS2" ]]; then
 	  break
 	else
-	  echo "!!! Passwords are not equal"
+	  recho "!!! Passwords are not equal"
 	fi
   done
   
@@ -120,7 +128,7 @@ prepare_disk() {
   rm -f "$TMPFILE"
 
   #Create lvm volumes
-  echo ">>> Creating LVM volumes..."
+  yecho ">>> Creating LVM volumes"
   pvcreate /dev/mapper/cryptlvm
   vgcreate vg0 /dev/mapper/cryptlvm
   lvcreate -L 50G vg0 -n root
@@ -131,14 +139,14 @@ prepare_disk() {
   VG0_ROOT_PART="$VG0_PART/root"
   VG0_HOME_PART="$VG0_PART/home"
   VG0_SWAP_PART="$VG0_PART/swap"
-  echo ">>> Formatting partitions..."
+  yecho ">>> Formatting partitions"
   mkfs.fat -F32 "$EFI_PART"
   mkfs.ext4 "$VG0_ROOT_PART"
   mkfs.ext4 "$VG0_HOME_PART"
   mkswap "$VG0_SWAP_PART"
 
   #Mount volumes
-  echo ">>> Mounting partitions..."
+  yecho ">>> Mounting partitions"
   mount -o noatime "$VG0_ROOT_PART" /mnt
   mkdir /mnt/home
   mount -o noatime "$VG0_HOME_PART" /mnt/home
@@ -146,16 +154,17 @@ prepare_disk() {
   mount "$EFI_PART" /mnt/boot
   swapon "$VG0_SWAP_PART"
 
-  echo ">>> Disk $DISK prepared successfully!"
+  yecho ">>> Disk $DISK prepared successfully!"
 }
 
 prepare_disk
 
 #Install linux
 install_linux() {
-  local PROCESSOR REGION CITY LANGUAGE HOSTNAME MKINITCPIO_CONF HOOKS_LINE HOOKS_ARRAY NEW_HOOKS BOOTLOADER_ID LVM_DISK_UUID GRUB_FILE USER_NAME NEED_BLUETOOTH NEED_POWER NEED_INTEL_VIDEO NEED_AMD_VIDEO NEED_NVIDIA_VIDEO
+  local PROCESSOR REGION CITY LANGUAGE HOSTNAME MKINITCPIO_CONF HOOKS_LINE HOOKS_ARRAY NEW_HOOKS BOOTLOADER_ID LVM_DISK_UUID GRUB_FILE USER_NAME NEED_BLUETOOTH NEED_INTEL_VIDEO NEED_AMD_VIDEO NEED_NVIDIA_VIDEO
   
-  echo ">>> Installing Linux"
+  yecho ">>> Installing Linux"
+  
   #Intel / AMD ucode
   while true; do
     read -rp "What processor do you have? (intel/amd) :" PROCESSOR
@@ -163,7 +172,7 @@ install_linux() {
 	if [[ "$PROCESSOR" == "amd" || "$PROCESSOR" == "intel" ]]; then
 	  break;
 	else
-	  echo "!!! Wrong name of processor"
+	  recho "!!! Wrong name of processor"
 	fi
   done
   
@@ -183,36 +192,42 @@ install_linux() {
   #Generate instructions for mounting disks as they are now
   genfstab -U /mnt >> /mnt/etc/fstab
   
+  #Choose fastest mirrors
+  yecho ">>> Updating mirros list"
+  arch-chroot /mnt pacman -S reflector
+  arch-chroot /mnt reflector --protocol https --age 12 --completion-percent 97 --latest 100 --score 7 --sort rate --verbose --connection-timeout 180 --download-timeout 180 --save /etc/pacman.d/mirrorlist
+  arch-chroot /mnt pacman -Syy
+  
   #Setup root password
-  echo ">>> Setting up root password"
+  yecho ">>> Setting up root password"
   arch-chroot /mnt passwd
   
   #Setup timezone
-  echo ">>> Setting up timezone"
+  yecho ">>> Setting up timezone"
   
   while true; do
-    echo ">>> Available regions:"
+    yecho ">>> Available regions:"
     arch-chroot /mnt find /usr/share/zoneinfo -mindepth 1 -maxdepth 1 -type d -printf "%f\n" | sort | tr '\n' ' '
 	read -rp "Choose region: " REGION
 	
 	if arch-chroot /mnt test -d "/usr/share/zoneinfo/$REGION"; then
-      echo ">>> Selected region: $REGION"
+      yecho ">>> Selected region: $REGION"
       break
     else
-      echo "!!! Region '$REGION' does not exist. Try again."
+      recho "!!! Region '$REGION' does not exist. Try again."
     fi
   done
   
   while true; do
-    echo ">>> Available cities:"
+    yecho ">>> Available cities:"
     arch-chroot /mnt find /usr/share/zoneinfo/"$REGION" -mindepth 1 -maxdepth 1 -printf "%f\n" | sort | tr '\n' ' '
 	read -rp "Choose city: " CITY
 	
 	if arch-chroot /mnt test -f "/usr/share/zoneinfo/$REGION/$CITY"; then
-      echo ">>> Selected city: $CITY"
+      yecho ">>> Selected city: $CITY"
       break
     else
-      echo "!!! City '$CITY' does not exist. Try again."
+      recho "!!! City '$CITY' does not exist. Try again."
     fi
   done
   
@@ -220,7 +235,7 @@ install_linux() {
   arch-chroot /mnt hwclock --systohc
   
   #Setup language
-  echo ">>> Setting up language"
+  yecho ">>> Setting up language"
   arch-chroot /mnt nano /etc/locale.gen
   arch-chroot /mnt locale-gen
   
@@ -228,17 +243,17 @@ install_linux() {
   echo "LANG=$LANGUAGE" > /mnt/etc/locale.conf
   
   #Setup hostname
-  echo ">>> Setting up hostname"
+  yecho ">>> Setting up hostname"
   read -rp "Enter hostname: " HOSTNAME
   echo "$HOSTNAME" > /mnt/etc/hostname
   
   #Enabling encryption in hooks
-  echo ">>> Setting up encryption hooks"
+  yecho ">>> Setting up encryption hooks"
   MKINITCPIO_CONF="/mnt/etc/mkinitcpio.conf"
   HOOKS_LINE=$(grep "^HOOKS=" "$MKINITCPIO_CONF")
   
   if [[ -z "$HOOKS_LINE" ]]; then
-    echo "!!! No HOOKS= line found in $MKINITCPIO_CONF"
+    recho "!!! No HOOKS= line found in $MKINITCPIO_CONF"
     exit 1
   fi
   
@@ -265,12 +280,12 @@ install_linux() {
   #Write result
   sed -i "s|^HOOKS=.*|HOOKS=(${NEW_HOOKS[*]})|" "$MKINITCPIO_CONF"
   
-  echo ">>> Updated HOOKS: (${NEW_HOOKS[*]})"
-  echo ">>> Regenerating initramfs..."
+  yecho ">>> Updated HOOKS: (${NEW_HOOKS[*]})"
+  yecho ">>> Regenerating initramfs"
   arch-chroot /mnt mkinitcpio -P
   
   #Setup bootloader
-  echo ">>> Setting up bootloader"
+  yecho ">>> Setting up bootloader"
   read -rp "Enter bootloader id: " BOOTLOADER_ID
   arch-chroot /mnt grub-install --target=x86_64-efi --efi-directory=/boot --bootloader-id="$BOOTLOADER_ID"
   mkdir /mnt/boot/EFI/BOOT
@@ -286,7 +301,7 @@ install_linux() {
   arch-chroot /mnt grub-mkconfig -o /boot/grub/grub.cfg
   
   #Add user
-  echo ">>> Adding new user..."
+  yecho ">>> Adding new user"
   read -rp "Enter user name: " USER_NAME
   arch-chroot /mnt useradd -m -G wheel "$USER_NAME"
   arch-chroot /mnt passwd "$USER_NAME"
@@ -294,46 +309,39 @@ install_linux() {
   sed -i 's/^#\s*%wheel ALL=(ALL:ALL) ALL/%wheel ALL=(ALL:ALL) ALL/' /mnt/etc/sudoers
   
   #Install bluetooth
-  echo ">>> Installing bluetooth..."
+  yecho ">>> Installing bluetooth"
   read -rp "Do you need bluetooth support? (y/n): " NEED_BLUETOOTH
   if [[ "$NEED_BLUETOOTH" == "y" ]]; then
-    arch-chroot /mnt pacman -S bluez bluez-utils
+    arch-chroot /mnt pacman -S --needed bluez bluez-utils
   fi
   
   #Install disks extra
-  echo ">>> Installing disks extra..."
-  arch-chroot /mnt pacman -S nfs-utils ntfs-3g exfatprogs
-  
-  #Install power management
-  echo ">>> Installing power management for laptops..."
-  read -rp "Do you need power management for laptops? (y/n): " NEED_POWER
-  if [[ "$NEED_POWER" == "y" ]]; then
-    arch-chroot /mnt pacman -S tlp tlp-rdw powertop
-  fi
+  yecho ">>> Installing disks extra"
+  arch-chroot /mnt pacman -S --needed nfs-utils ntfs-3g exfatprogs
   
   #Install video drivers
-  echo ">>> Installing vide drivers..."
+  yecho ">>> Installing video drivers"
   echo "[multilib]" >> /mnt/etc/pacman.conf
   echo "Include = /etc/pacman.d/mirrorlist" >> /mnt/etc/pacman.conf
   arch-chroot /mnt pacman -Syu
   
   read -rp "Do you need Intel video driver? {y/n): " NEED_INTEL_VIDEO
   if [[ "$NEED_INTEL_VIDEO" == "y" ]]; then
-    arch-chroot /mnt pacman -S mesa lib32-mesa vulkan-intel lib32-vulkan-intel
+    arch-chroot /mnt pacman -S --needed mesa lib32-mesa vulkan-intel lib32-vulkan-intel
   fi
   
   read -rp "Do you need AMD video driver? {y/n): " NEED_AMD_VIDEO
   if [[ "$NEED_AMD_VIDEO" == "y" ]]; then
-    arch-chroot /mnt pacman -S linux-firmware-amdgpu mesa lib32-mesa vulkan-radeon lib32-vulkan-radeon libva-mesa-driver
+    arch-chroot /mnt pacman -S --needed linux-firmware-amdgpu mesa lib32-mesa vulkan-radeon lib32-vulkan-radeon libva-mesa-driver
   fi
   
   read -rp "Do you need Nvidia video driver? {y/n): " NEED_NVIDIA_VIDEO
   if [[ "$NEED_NVIDIA_VIDEO" == "y" ]]; then
-    arch-chroot /mnt pacman -S mesa lib32-mesa vulkan-nouveau lib32-vulkan-nouveau
+    arch-chroot /mnt pacman -S --needed mesa lib32-mesa vulkan-nouveau lib32-vulkan-nouveau
   fi
   
   #Enable services
-  echo ">>> Enabling services..."
+  yecho ">>> Enabling services"
   arch-chroot /mnt systemctl enable NetworkManager #network
   arch-chroot /mnt systemctl enable fstrim.timer #ssd optimisation
   arch-chroot /mnt sysctl vm.swappiness=0 #ssd optimisation
@@ -342,17 +350,13 @@ install_linux() {
     arch-chroot /mnt systemctl enable bluetooth
   fi
   
-  if [[ "$NEED_POWER" == "y" ]]; then
-    arch-chroot /mnt systemctl enable tlp
-  fi
-  
-  echo ">>> Finished basic linux installation"
+  yecho ">>> Finished basic linux installation"
 }
 
 install_linux
 
 install_desktop() {
-echo ">>> Installing desktop environment..."
+yecho ">>> Installing desktop environment"
 # plasma-desktop: the barebones plasma environment.
 # plasma-pa: the KDE audio applet.
 # plasma-nm: the KDE network applet.
@@ -366,7 +370,6 @@ echo ">>> Installing desktop environment..."
 # power-profiles-daemon: adds 3 power profiles selectable from powerdevil ( power saving, balanced, performance ). Make sure that its service is enabled and running ( it should be ).
 # kdeplasma-addons: some useful addons.
 # xdg-desktop-portal-kde: better integrates the plasma desktop in various windows like file pickers.
-# xwaylandvideobridge: exposes Wayland windows to XWayland-using screen sharing apps ( useful when screen sharing on discord, but also in other instances ).
 # kde-gtk-config: the native settings integration to manage GTK theming.
 # breeze-gtk: the breeze GTK theme.
 # cups, print-manager: the CUPS print service and the KDE front-end.
@@ -377,16 +380,33 @@ echo ">>> Installing desktop environment..."
 # okular: the KDE pdf viewer.
 # gwenview: the KDE image viewer.
 # ark: the KDE archive manager.
-# pinta: a paint.net clone written in GTK.
 # spectacle: the KDE screenshot tool.
 # haruna: mediaplayer
-arch-chroot /mnt pacman -S plasma-desktop plasma-pa plasma-nm plasma-systemmonitor plasma-firewall kscreen kwalletmanager kwallet-pam bluedevil powerdevil power-profiles-daemon kdeplasma-addons xdg-desktop-portal-kde xwaylandvideobridge kde-gtk-config breeze-gtk cups print-manager konsole dolphin ffmpegthumbs kate okular gwenview ark pinta spectacle haruna
+arch-chroot /mnt pacman -S --needed plasma-desktop plasma-pa plasma-nm plasma-systemmonitor plasma-firewall kscreen kwalletmanager kwallet-pam bluedevil powerdevil power-profiles-daemon kdeplasma-addons xdg-desktop-portal-kde kde-gtk-config breeze-gtk cups print-manager konsole dolphin ffmpegthumbs kate okular gwenview ark spectacle haruna
 
+#flatpak
+yecho ">>> Installing flatpak"
+arch-chroot /mnt pacman -S --needed flatpak
+arch-chroot /mnt flatpak remote-add --if-not-exists flathub https://flathub.org/repo/flathub.flatpakrepo
+
+#zen browser
+yecho ">>> Installing zen browser"
+arch-chroot /mnt flatpak install flathub app.zen_browser.zen
 
 #environment manager
-arch-chroot /mnt pacman -S sddm
+yecho ">>> Installing environment manager"
+arch-chroot /mnt pacman -S --needed sddm
 arch-chroot /mnt systemctl enable sddm
 arch-chroot /mnt pacman -S --needed sddm-kcm
 }
 
 install_desktop
+
+read -rp "Reboot? (y/n)" CONFIRM
+if [[ "$CONFIRM" == "y" ]]; then
+  swapoff --all
+  umount -R /mnt
+  vgchange -an vg0
+  cryptsetup close cryptlvm
+  reboot
+fi
