@@ -65,7 +65,7 @@ done
 
 #Prepare disk
 prepare_disk() {
-  local DISK_NAME DISK CONFIRM EFI_PART ROOT_PART VG0_PART VG0_ROOT_PART VG0_HOME_PART VG0_SWAP_PART LUKS_PASS1 LUKS_PASS2 TMPFILE
+  local DISK_NAME DISK CONFIRM EFI_PART VG0_PART VG0_ROOT_PART VG0_HOME_PART VG0_SWAP_PART LUKS_PASS1 LUKS_PASS2 TMPFILE
   
   echo ">>> Creating disk partitions..."
   
@@ -107,7 +107,7 @@ prepare_disk() {
 	if [[ "$LUKS_PASS1" == "$LUKS_PASS2" ]]; then
 	  break
 	else
-	  echo "Passwords are not equal"
+	  echo "!!! Passwords are not equal"
 	fi
   done
   
@@ -150,4 +150,219 @@ prepare_disk() {
 }
 
 prepare_disk
+
+#Install linux
+install_linux() {
+  local PROCESSOR REGION CITY LANGUAGE HOSTNAME MKINITCPIO_CONF HOOKS_LINE HOOKS_ARRAY NEW_HOOKS BOOTLOADER_ID LVM_DISK_UUID GRUB_FILE USER_NAME NEED_BLUETOOTH NEED_POWER NEED_INTEL_VIDEO NEED_AMD_VIDEO NEED_NVIDIA_VIDEO
+  
+  echo ">>> Installing Linux"
+  #Intel / AMD ucode
+  while true; do
+    read -rp "What processor do you have? (intel/amd) :" PROCESSOR
+	
+	if [[ "$PROCESSOR" == "amd" || "$PROCESSOR" == "intel" ]]; then
+	  break;
+	else
+	  echo "!!! Wrong name of processor"
+	fi
+  done
+  
+  #base linux linux-firmware - core
+  #base-devel - base development stuff
+  #lvm2 - for loading encrypted disk
+  #nano - my favorite editor
+  #sudo - for sudo users
+  #git - well, git
+  #"$PROCESSOR"-ucode - microcode for CPU
+  #grub efibootmgr - bootloader
+  #pipewire pipewire-alsa pipewire-pulse pipewire-jack - for the new audio framework replacing pulse and jack
+  #wireplumber - the pipewire session manager
+  #networkmanager - network
+  pacstrap /mnt base base-devel linux linux-firmware lvm2 nano sudo git "$PROCESSOR"-ucode grub efibootmgr pipewire pipewire-alsa pipewire-pulse pipewire-jack wireplumber networkmanager
+
+  #Generate instructions for mounting disks as they are now
+  genfstab -U /mnt >> /mnt/etc/fstab
+  
+  #Setup root password
+  echo ">>> Setting up root password"
+  arch-chroot /mnt passwd
+  
+  #Setup timezone
+  echo ">>> Setting up timezone"
+  
+  while true; do
+    echo ">>> Available regions:"
+    arch-chroot /mnt find /usr/share/zoneinfo -mindepth 1 -maxdepth 1 -type d -printf "%f\n" | sort | tr '\n' ' '
+	read -rp "Choose region: " REGION
+	
+	if arch-chroot /mnt test -d "/usr/share/zoneinfo/$REGION"; then
+      echo ">>> Selected region: $REGION"
+      break
+    else
+      echo "!!! Region '$REGION' does not exist. Try again."
+    fi
+  done
+  
+  while true; do
+    echo ">>> Available cities:"
+    arch-chroot /mnt find /usr/share/zoneinfo/"$REGION" -mindepth 1 -maxdepth 1 -printf "%f\n" | sort | tr '\n' ' '
+	read -rp "Choose city: " CITY
+	
+	if arch-chroot /mnt test -f "/usr/share/zoneinfo/$REGION/$CITY"; then
+      echo ">>> Selected city: $CITY"
+      break
+    else
+      echo "!!! City '$CITY' does not exist. Try again."
+    fi
+  done
+  
+  arch-chroot /mnt ln -sf /usr/share/zoneinfo/"$REGION"/"$CITY" /etc/localtime
+  arch-chroot /mnt hwclock --systohc
+  
+  #Setup language
+  echo ">>> Setting up language"
+  arch-chroot /mnt nano /etc/locale.gen
+  arch-chroot /mnt locale-gen
+  
+  read -rp "Enter main language (example: en_US.UTF-8): " LANGUAGE
+  echo "LANG=$LANGUAGE" > /mnt/etc/locale.conf
+  
+  #Setup hostname
+  echo ">>> Setting up hostname"
+  read -rp "Enter hostname: " HOSTNAME
+  echo "$HOSTNAME" > /mnt/etc/hostname
+  
+  #Enabling encryption in hooks
+  echo ">>> Setting up encryption hooks"
+  MKINITCPIO_CONF="/mnt/etc/mkinitcpio.conf"
+  HOOKS_LINE=$(grep "^HOOKS=" "$MKINITCPIO_CONF")
+  
+  if [[ -z "$HOOKS_LINE" ]]; then
+    echo "!!! No HOOKS= line found in $MKINITCPIO_CONF"
+    exit 1
+  fi
+  
+  # Strip HOOKS=(...) into array
+  HOOKS_ARRAY=($(echo "$HOOKS_LINE" | sed -E "s/^HOOKS=\((.*)\)/\1/"))
+  
+  # Rebuild new array, injecting encrypt + lvm2 before filesystems
+  NEW_HOOKS=()
+  
+  for h in "${HOOKS_ARRAY[@]}"; do
+	#skip encrypt lvm2 if exist
+    if [[ "$h" == "encrypt" || "$h" == "lvm2" ]]; then
+	  continue
+	fi
+  
+    if [[ "$h" == "filesystems" ]]; then
+	  NEW_HOOKS+=("encrypt")
+	  NEW_HOOKS+=("lvm2")
+    fi
+    
+	NEW_HOOKS+=("$h")
+  done
+  
+  #Write result
+  sed -i "s|^HOOKS=.*|HOOKS=(${NEW_HOOKS[*]})|" "$MKINITCPIO_CONF"
+  
+  echo ">>> Updated HOOKS: (${NEW_HOOKS[*]})"
+  echo ">>> Regenerating initramfs..."
+  arch-chroot /mnt mkinitcpio -P
+  
+  #Setup bootloader
+  echo ">>> Setting up bootloader"
+  read -rp "Enter bootloader id: " BOOTLOADER_ID
+  arch-chroot /mnt grub-install --target=x86_64-efi --efi-directory=/boot --bootloader-id="$BOOTLOADER_ID"
+  mkdir /mnt/boot/EFI/BOOT
+  cp /mnt/boot/EFI/"$BOOTLOADER_ID"/grubx64.efi /mnt/boot/EFI/BOOT/BOOTX64.EFI
+  
+  #Open lvm on load
+  LVM_DISK_UUID=$(blkid -s UUID -o value "$ROOT_PART")
+  GRUB_FILE="/mnt/etc/default/grub"
+  if ! grep -q "cryptdevice=UUID=$LVM_DISK_UUID:cryptlvm" "$GRUB_FILE"; then
+    sed -i "s|^GRUB_CMDLINE_LINUX=\"\(.*\)\"|GRUB_CMDLINE_LINUX=\"\1 cryptdevice=UUID=$LVM_DISK_UUID:cryptlvm\"|" "$GRUB_FILE"
+  fi
+  
+  arch-chroot /mnt grub-mkconfig -o /boot/grub/grub.cfg
+  
+  #Add user
+  echo ">>> Adding new user..."
+  read -rp "Enter user name: " USER_NAME
+  arch-chroot /mnt useradd -m -G wheel "$USER_NAME"
+  arch-chroot /mnt passwd "$USER_NAME"
+  #Uncomment line
+  sed -i 's/^#\s*%wheel ALL=(ALL:ALL) ALL/%wheel ALL=(ALL:ALL) ALL/' /mnt/etc/sudoers
+  
+  #Install bluetooth
+  echo ">>> Installing bluetooth..."
+  read -rp "Do you need bluetooth support? (y/n): " NEED_BLUETOOTH
+  if [[ "$NEED_BLUETOOTH" == "y" ]]; then
+    arch-chroot /mnt pacman -S bluez bluez-utils
+  fi
+  
+  #Install disks extra
+  echo ">>> Installing disks extra..."
+  arch-chroot /mnt pacman -S nfs-utils ntfs-3g exfatprogs
+  
+  #Install power management
+  echo ">>> Installing power management for laptops..."
+  read -rp "Do you need power management for laptops? (y/n): " NEED_POWER
+  if [[ "$NEED_POWER" == "y" ]]; then
+    arch-chroot /mnt pacman -S tlp tlp-rdw powertop
+  fi
+  
+  #Install firewall
+  echo ">>> Installing firewall...."
+  arch-chroot /mnt pacman -S iptables-nft ufw
+  
+  #Install video drivers
+  echo ">>> Installing vide drivers..."
+  echo "[multilib]" >> /mnt/etc/pacman.conf
+  echo "Include = /etc/pacman.d/mirrorlist" >> /mnt/etc/pacman.conf
+  arch-chroot /mnt pacman -Syu
+  
+  read -rp "Do you need Intel video driver? {y/n): " NEED_INTEL_VIDEO
+  if [[ "$NEED_INTEL_VIDEO" == "y" ]]; then
+    arch-chroot /mnt pacman -S mesa lib32-mesa vulkan-intel lib32-vulkan-intel xf86-video-intel
+  fi
+  
+  read -rp "Do you need AMD video driver? {y/n): " NEED_AMD_VIDEO
+  if [[ "$NEED_AMD_VIDEO" == "y" ]]; then
+    arch-chroot /mnt pacman -S linux-firmware-amdgpu mesa lib32-mesa vulkan-radeon lib32-vulkan-radeon xf86-video-amdgpu
+  fi
+  
+  read -rp "Do you need Nvidia video driver? {y/n): " NEED_NVIDIA_VIDEO
+  if [[ "$NEED_NVIDIA_VIDEO" == "y" ]]; then
+    arch-chroot /mnt pacman -S mesa lib32-mesa vulkan-nouveau lib32-vulkan-nouveau xf86-video-nouveau
+  fi
+  
+  #Enable services
+  echo ">>> Enabling services..."
+  arch-chroot /mnt systemctl enable NetworkManager #network
+  arch-chroot /mnt ufw enable #firewall
+  arch-chroot /mnt systemctl enable fstrim.timer #ssd optimisation
+  arch-chroot /mnt sysctl vm.swappiness=0 #ssd optimisation
+  
+  if [[ "$NEED_BLUETOOTH" == "y" ]]; then
+    arch-chroot /mnt systemctl enable bluetooth
+  fi
+  
+  if [[ "$NEED_POWER" == "y" ]]; then
+    arch-chroot /mnt systemctl enable tlp
+  fi
+  
+  echo ">>> Finished basic linux installation"
+}
+
+install_linux
+
+install_desktop() {
+local 
+
+echo ">>> Installing desktop environment..."
+
+
+}
+
+install_desktop
 
