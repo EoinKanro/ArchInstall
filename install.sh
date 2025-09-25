@@ -319,26 +319,39 @@ install_linux() {
   #Install disks extra
   yecho ">>> Installing disks extra"
   arch-chroot /mnt pacman -S --needed nfs-utils ntfs-3g exfatprogs
+
+ 	#Install yay
+	yecho ">>> Installing yay"
+  arch-chroot /mnt /bin/bash -c "cd /tmp && git clone https://aur.archlinux.org/yay.git && cd yay && makepkg -si --noconfirm"
   
   #Install video drivers
   yecho ">>> Installing video drivers"
   echo "[multilib]" >> /mnt/etc/pacman.conf
   echo "Include = /etc/pacman.d/mirrorlist" >> /mnt/etc/pacman.conf
   arch-chroot /mnt pacman -Syu
-  
+
+  #https://wiki.archlinux.org/title/Intel_graphics
   read -rp "Do you need Intel video driver? {y/n): " NEED_INTEL_VIDEO
   if [[ "$NEED_INTEL_VIDEO" == "y" ]]; then
     arch-chroot /mnt pacman -S --needed mesa lib32-mesa vulkan-intel lib32-vulkan-intel
   fi
-  
+
+	#https://wiki.archlinux.org/title/AMDGPU
   read -rp "Do you need AMD video driver? {y/n): " NEED_AMD_VIDEO
   if [[ "$NEED_AMD_VIDEO" == "y" ]]; then
-    arch-chroot /mnt pacman -S --needed linux-firmware-amdgpu mesa lib32-mesa vulkan-radeon lib32-vulkan-radeon libva-mesa-driver
+    arch-chroot /mnt pacman -S --needed mesa lib32-mesa vulkan-radeon lib32-vulkan-radeon xf86-video-amdgpu
   fi
-  
+
+  #https://wiki.archlinux.org/title/Nouveau
   read -rp "Do you need Nvidia video driver? {y/n): " NEED_NVIDIA_VIDEO
   if [[ "$NEED_NVIDIA_VIDEO" == "y" ]]; then
-    arch-chroot /mnt pacman -S --needed mesa lib32-mesa vulkan-nouveau lib32-vulkan-nouveau
+    arch-chroot /mnt pacman -S --needed mesa lib32-mesa vulkan-nouveau lib32-vulkan-nouveau xf86-video-nouveau
+
+		#https://wiki.archlinux.org/title/PRIME
+  	read -rp "Do you PRIME for hybrid system? {y/n): " NEED_NVIDIA_VIDEO
+		if [[ "$NEED_NVIDIA_VIDEO" == "y" ]]; then
+ 			arch-chroot /mnt yay -S nvidia-prime-rtd3pm
+ 		fi
   fi
   
   #Enable services
