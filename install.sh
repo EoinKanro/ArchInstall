@@ -370,53 +370,54 @@ install_linux() {
 install_linux
 
 install_desktop() {
-yecho ">>> Installing desktop environment"
-# plasma-desktop: the barebones plasma environment.
-# plasma-pa: the KDE audio applet.
-# plasma-nm: the KDE network applet.
-# plasma-systemmonitor: the KDE task manager.
-# plasma-firewall: the KDE firewall.
-# kscreen: the KDE display configurator.
-# kwalletmanager: manage secure vaults ( needed to store the passwords of local applications in an encrypted format ). This also installs kwallet as a dependency, so I don't need to specify it.
-# kwallet-pam: automatically unlocks secure vault upon login ( without this, each time the wallet gets queried it asks for your password to unlock it ).
-# bluedevil: the KDE bluetooth manager.
-# powerdevil: the KDE power manager.
-# power-profiles-daemon: adds 3 power profiles selectable from powerdevil ( power saving, balanced, performance ). Make sure that its service is enabled and running ( it should be ).
-# kdeplasma-addons: some useful addons.
-# xdg-desktop-portal-kde: better integrates the plasma desktop in various windows like file pickers.
-# kde-gtk-config: the native settings integration to manage GTK theming.
-# breeze-gtk: the breeze GTK theme.
-# cups, print-manager: the CUPS print service and the KDE front-end.
-# konsole: the KDE terminal.
-# dolphin: the KDE file manager.
-# ffmpegthumbs: video thumbnailer for dolphin.
-# kate: the KDE text editor.
-# okular: the KDE pdf viewer.
-# gwenview: the KDE image viewer.
-# ark: the KDE archive manager.
-# spectacle: the KDE screenshot tool.
-# haruna: mediaplayer
-arch-chroot /mnt pacman -S --needed plasma-desktop plasma-pa plasma-nm plasma-systemmonitor plasma-firewall kscreen kwalletmanager kwallet-pam bluedevil powerdevil power-profiles-daemon kdeplasma-addons xdg-desktop-portal-kde kde-gtk-config breeze-gtk cups print-manager konsole dolphin ffmpegthumbs kate okular gwenview ark spectacle haruna
+	yecho ">>> Installing desktop environment"
+	# plasma-desktop: the barebones plasma environment.
+	# plasma-pa: the KDE audio applet.
+	# plasma-nm: the KDE network applet.
+	# plasma-systemmonitor: the KDE task manager.
+	# plasma-firewall: the KDE firewall.
+	# kscreen: the KDE display configurator.
+	# kwalletmanager: manage secure vaults ( needed to store the passwords of local applications in an encrypted format ). This also installs kwallet as a dependency, so I don't need to specify it.
+	# kwallet-pam: automatically unlocks secure vault upon login ( without this, each time the wallet gets queried it asks for your password to unlock it ).
+	# bluedevil: the KDE bluetooth manager.
+	# powerdevil: the KDE power manager.
+	# power-profiles-daemon: adds 3 power profiles selectable from powerdevil ( power saving, balanced, performance ). Make sure that its service is enabled and running ( it should be ).
+	# kdeplasma-addons: some useful addons.
+	# xdg-desktop-portal-kde: better integrates the plasma desktop in various windows like file pickers.
+	# kde-gtk-config: the native settings integration to manage GTK theming.
+	# breeze-gtk: the breeze GTK theme.
+	# cups, print-manager: the CUPS print service and the KDE front-end.
+	# konsole: the KDE terminal.
+	# dolphin dolphin-plugins: the KDE file manager.
+	# ffmpegthumbs: video thumbnailer for dolphin.
+	# kate: the KDE text editor.
+	# okular: the KDE pdf viewer.
+	# gwenview: the KDE image viewer.
+	# ark: the KDE archive manager.
+	# spectacle: the KDE screenshot tool.
+	# haruna: mediaplayer
+	# discover: app manager
+	arch-chroot /mnt pacman -S --needed plasma-desktop plasma-pa plasma-nm plasma-systemmonitor plasma-firewall kscreen kwalletmanager kwallet-pam bluedevil powerdevil power-profiles-daemon kdeplasma-addons xdg-desktop-portal-kde kde-gtk-config breeze-gtk cups print-manager konsole dolphin dolphin-plugins ffmpegthumbs kate okular gwenview ark spectacle haruna discover
 
-#environment manager
-yecho ">>> Installing environment manager"
-arch-chroot /mnt pacman -S --needed ly
-arch-chroot /mnt systemctl enable ly
-replace_conf_param animation colormix /mnt/etc/ly/config.ini
-replace_conf_param bigclock en /mnt/etc/ly/config.ini
+	#environment manager
+	yecho ">>> Installing environment manager"
+	arch-chroot /mnt pacman -S --needed ly
+	arch-chroot /mnt systemctl enable ly
+	replace_conf_param animation colormix /mnt/etc/ly/config.ini
+	replace_conf_param bigclock en /mnt/etc/ly/config.ini
 
-#flatpak
-yecho ">>> Installing flatpak"
-arch-chroot /mnt pacman -S --needed flatpak
-arch-chroot /mnt flatpak remote-add --if-not-exists flathub https://flathub.org/repo/flathub.flatpakrepo
+	#flatpak
+	yecho ">>> Installing flatpak"
+	arch-chroot /mnt pacman -S --needed flatpak
+	arch-chroot /mnt flatpak remote-add --if-not-exists flathub https://flathub.org/repo/flathub.flatpakrepo
 
-#zen browser
-yecho ">>> Installing zen browser"
-arch-chroot /mnt flatpak install flathub app.zen_browser.zen
+	#zen browser
+	yecho ">>> Installing zen browser"
+	arch-chroot /mnt flatpak install flathub app.zen_browser.zen
 
-#kando
-yecho ">>> Installing kando"
-arch-chroot /mnt flatpak install flathub menu.kando.Kando
+  #kando
+	yecho ">>> Installing kando"
+	arch-chroot /mnt flatpak install flathub menu.kando.Kando
 }
 
 install_desktop
