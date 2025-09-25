@@ -14,7 +14,7 @@ replace_conf_param() {
   local new_value="$2"
   local conf_path="$3"
 	
-  sed -i "s#^\($param_name *= *\).*$#\1$new_value#" "$conf_path"
+  sed -i "s|^\($param_name *= *\).*$|\1$new_value|" "$conf_path"
 }
 
 #append to param="value" new value
@@ -23,7 +23,7 @@ append_conf_param() {
   local new_value="$2"
   local conf_path="$3"
 
-  sed -i "s#^$param_name=\"\(.*\)\"#$param_name=\"\1 $new_value\"#" "$conf_path"
+  sed -i "s|^$param_name=\"\(.*\)\"|$param_name=\"\1 $new_value\"|" "$conf_path"
 }
 
 #WiFi connection
@@ -319,11 +319,7 @@ install_linux() {
   #Install disks extra
   yecho ">>> Installing disks extra"
   arch-chroot /mnt pacman -S --needed nfs-utils ntfs-3g exfatprogs
-
- 	#Install yay
-	yecho ">>> Installing yay"
-  arch-chroot /mnt /bin/bash -c "cd /tmp && git clone https://aur.archlinux.org/yay.git && cd yay && makepkg -si --noconfirm"
-  
+    
   #Install video drivers
   yecho ">>> Installing video drivers"
   echo "[multilib]" >> /mnt/etc/pacman.conf
@@ -347,11 +343,24 @@ install_linux() {
   if [[ "$NEED_NVIDIA_VIDEO" == "y" ]]; then
     arch-chroot /mnt pacman -S --needed mesa lib32-mesa vulkan-nouveau lib32-vulkan-nouveau xf86-video-nouveau
 
-		#https://wiki.archlinux.org/title/PRIME
-  	read -rp "Do you PRIME for hybrid system? {y/n): " NEED_NVIDIA_VIDEO
-		if [[ "$NEED_NVIDIA_VIDEO" == "y" ]]; then
- 			arch-chroot /mnt yay -S nvidia-prime-rtd3pm
- 		fi
+	#https://wiki.archlinux.org/title/PRIME
+    read -rp "Do you PRIME for hybrid system? {y/n): " NEED_NVIDIA_VIDEO
+    if [[ "$NEED_NVIDIA_VIDEO" == "y" ]]; then
+	  echo '# Enable runtime PM for NVIDIA VGA/3D controller devices on driver bind' >> /mnt/etc/udev/rules.d/80-nvidia-pm.rules
+      echo 'ACTION=="bind", SUBSYSTEM=="pci", ATTR{vendor}=="0x10de", ATTR{class}=="0x030000", TEST=="power/control", ATTR{power/control}="auto"' >> /mnt/etc/udev/rules.d/80-nvidia-pm.rules
+      echo 'ACTION=="bind", SUBSYSTEM=="pci", ATTR{vendor}=="0x10de", ATTR{class}=="0x030200", TEST=="power/control", ATTR{power/control}="auto"' >> /mnt/etc/udev/rules.d/80-nvidia-pm.rules
+
+      echo '# Disable runtime PM for NVIDIA VGA/3D controller devices on driver unbind' >> /mnt/etc/udev/rules.d/80-nvidia-pm.rules
+      echo 'ACTION=="unbind", SUBSYSTEM=="pci", ATTR{vendor}=="0x10de", ATTR{class}=="0x030000", TEST=="power/control", ATTR{power/control}="on"' >> /mnt/etc/udev/rules.d/80-nvidia-pm.rules
+      echo 'ACTION=="unbind", SUBSYSTEM=="pci", ATTR{vendor}=="0x10de", ATTR{class}=="0x030200", TEST=="power/control", ATTR{power/control}="on"' >> /mnt/etc/udev/rules.d/80-nvidia-pm.rules
+	  
+	  read -rp "Is the videocard Ampere+? {y/n): " NEED_NVIDIA_VIDEO
+	  if [[ "$NEED_NVIDIA_VIDEO" == "y" ]]; then
+	    echo 'options nvidia "NVreg_DynamicPowerManagement=0x03"' >> /mnt/etc/modprobe.d/nvidia-pm.conf
+	  else
+		echo 'options nvidia "NVreg_DynamicPowerManagement=0x02"' >> /mnt/etc/modprobe.d/nvidia-pm.conf
+	  fi
+    fi
   fi
   
   #Enable services
@@ -415,7 +424,7 @@ install_desktop() {
 	yecho ">>> Installing zen browser"
 	arch-chroot /mnt flatpak install flathub app.zen_browser.zen
 
-  #kando
+    #kando
 	yecho ">>> Installing kando"
 	arch-chroot /mnt flatpak install flathub menu.kando.Kando
 }
