@@ -8,6 +8,24 @@ recho() {
   echo -e "\e[31m$1\e[0m"
 }
 
+#replaces param = value with new value
+replace_conf_param() {
+  local param_name="$1"
+  local new_value="$2"
+  local conf_path="$3"
+	
+  sed -i "s#^\($param_name *= *\).*$#\1$new_value#" "$conf_path"
+}
+
+#append to param="value" new value
+append_conf_param() {
+  local param_name="$1"
+  local new_value="$2"
+  local conf_path="$3"
+
+  sed -i "s#^$param_name=\"\(.*\)\"#$param_name=\"\1 $new_value\"#" "$conf_path"
+}
+
 #WiFi connection
 connect_wifi() {
   local ADAPTER_NAME WIFI_DEVICE_NAME NETWORK_NAME NETWORK_PASSWORD
@@ -261,7 +279,7 @@ install_linux() {
   done
   
   #Write result
-  sed -i "s|^HOOKS=.*|HOOKS=(${NEW_HOOKS[*]})|" "$MKINITCPIO_CONF"
+  replace_conf_param HOOKS "(${NEW_HOOKS[*]})" "$MKINITCPIO_CONF"
   
   yecho ">>> Updated HOOKS: (${NEW_HOOKS[*]})"
   yecho ">>> Regenerating initramfs"
@@ -278,7 +296,7 @@ install_linux() {
   LVM_DISK_UUID=$(blkid -s UUID -o value "$ROOT_PART")
   GRUB_FILE="/mnt/etc/default/grub"
   if ! grep -q "cryptdevice=UUID=$LVM_DISK_UUID:cryptlvm" "$GRUB_FILE"; then
-    sed -i "s|^GRUB_CMDLINE_LINUX=\"\(.*\)\"|GRUB_CMDLINE_LINUX=\"\1 cryptdevice=UUID=$LVM_DISK_UUID:cryptlvm\"|" "$GRUB_FILE"
+		append_conf_param GRUB_CMDLINE_LINUX "cryptdevice=UUID=$LVM_DISK_UUID:cryptlvm" "$GRUB_FILE"
   fi
   
   arch-chroot /mnt grub-mkconfig -o /boot/grub/grub.cfg
@@ -369,9 +387,10 @@ arch-chroot /mnt pacman -S --needed plasma-desktop plasma-pa plasma-nm plasma-sy
 
 #environment manager
 yecho ">>> Installing environment manager"
-arch-chroot /mnt pacman -S --needed sddm
-arch-chroot /mnt systemctl enable sddm
-arch-chroot /mnt pacman -S --needed sddm-kcm
+arch-chroot /mnt pacman -S --needed ly
+arch-chroot /mnt systemctl enable ly
+replace_conf_param animation colormix /mnt/etc/ly/config.ini
+replace_conf_param bigclock en /mnt/etc/ly/config.ini
 
 #flatpak
 yecho ">>> Installing flatpak"
@@ -382,6 +401,9 @@ arch-chroot /mnt flatpak remote-add --if-not-exists flathub https://flathub.org/
 yecho ">>> Installing zen browser"
 arch-chroot /mnt flatpak install flathub app.zen_browser.zen
 
+#kando
+yecho ">>> Installing kando"
+arch-chroot /mnt flatpak install flathub menu.kando.Kando
 }
 
 install_desktop
