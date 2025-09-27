@@ -4,8 +4,33 @@ yecho() {
   echo -e "\e[33m$1\e[0m"
 }
 
+mecho() {
+  echo -e "\e[35m$1\e[0m"
+}
+
 recho() {
   echo -e "\e[31m$1\e[0m"
+}
+
+print_help() {
+  yecho "ArhInstall usage:"
+  echo
+  yecho "-help - this help"
+  yecho "-default - default installation from erasing disk to desktop environment"
+  yecho "-disk - format disk and mount to /mnt"
+  yecho "-linux - install default packages and tweak for LVM"
+  yecho "-desktop - install desktop environment and programs"
+  echo
+  yecho "If 'help' or 'default' passed then all other arguments will be ignored"
+  yecho "Use the others arguments only when error happened and you need to retry specific step"
+}
+
+INPUT_PARAMS=" $* "
+contains_input() {
+  case "$INPUT_PARAMS" in
+    *" $1 "*) return 0 ;;
+    *) return 1 ;;
+  esac
 }
 
 #replaces param = value with new value
@@ -13,7 +38,7 @@ replace_conf_param() {
   local param_name="$1"
   local new_value="$2"
   local conf_path="$3"
-	
+  
   sed -i "s|^\($param_name *= *\).*$|\1$new_value|" "$conf_path"
 }
 
@@ -26,17 +51,18 @@ append_conf_param() {
   sed -i "s|^$param_name=\"\(.*\)\"|$param_name=\"\1 $new_value\"|" "$conf_path"
 }
 
-#WiFi connection
 connect_wifi() {
   local ADAPTER_NAME WIFI_DEVICE_NAME NETWORK_NAME NETWORK_PASSWORD
 
-  yecho ">>> Conecting to WiFi"
+  yecho ">>> Connecting to WiFi"
   echo
   while true; do
     iwctl adapter list
-    read -rp "Enter adapter name (example: phy0): " ADAPTER_NAME
+
+    yecho "Enter adapter name (example: phy0):"
+    read -r ADAPTER_NAME
   
-    if iwctl adapter $ADAPTER_NAME set-property Powered on; then
+    if iwctl adapter "$ADAPTER_NAME" set-property Powered on; then
       yecho ">>> Adapter $ADAPTER_NAME switched on"
       break
     else
@@ -46,9 +72,11 @@ connect_wifi() {
 
   while true; do
     iwctl device list
-    read -rp "Enter device name (example: wlan0): " WIFI_DEVICE_NAME
+
+    yecho "Enter device name (example: wlan0):"
+    read -r WIFI_DEVICE_NAME
   
-    if iwctl device $WIFI_DEVICE_NAME set-property Powered on; then
+    if iwctl device "$WIFI_DEVICE_NAME" set-property Powered on; then
       yecho ">>> Device $WIFI_DEVICE_NAME switched on"
       break
     else
@@ -59,17 +87,21 @@ connect_wifi() {
   while true; do
     iwctl station "$WIFI_DEVICE_NAME" scan
     iwctl station "$WIFI_DEVICE_NAME" get-networks
-    read -rp "Enter network name: " NETWORK_NAME
-    read -rsp "Enter password: " NETWORK_PASSWORD
-	echo
+
+    yecho "Enter network name:"
+    read -r NETWORK_NAME
+    yecho "Enter password:"
+    read -rs NETWORK_PASSWORD
+    echo
   
     if iwctl --passphrase "$NETWORK_PASSWORD" station "$WIFI_DEVICE_NAME" connect "$NETWORK_NAME"; then
-      yecho ">>> Connected initiated"
-	  
-	  yecho ">>> Waiting for $WIFI_DEVICE_NAME to get an IP..."
+      yecho ">>> Connection initiated"
+    
+      yecho ">>> Waiting for $WIFI_DEVICE_NAME to get an IP..."
       while ! ip addr show "$WIFI_DEVICE_NAME" | grep -q "inet "; do
         sleep 1
-	  done
+      done
+
       yecho ">>> Connected to $NETWORK_NAME!"
       break
     else
@@ -78,35 +110,37 @@ connect_wifi() {
   done
 }
 
-#Check network
-while true; do
-  if ping -c 3 archlinux.org; then
-    yecho ">>> Internet is up!"
-    break
-  else
-    recho "!!! No Internet connection"
-    connect_wifi
-  fi
-done
-
-#Prepare disk
+#Format one disk using LUKS LVM and mount to /mnt
 prepare_disk() {
-  local DISK_NAME DISK CONFIRM EFI_PART VG0_PART VG0_ROOT_PART VG0_HOME_PART VG0_SWAP_PART LUKS_PASS1 LUKS_PASS2 TMPFILE
-  
+  local DISK CONFIRM EFI_PART VG0_PART VG0_ROOT_PART VG0_HOME_PART VG0_SWAP_PART
+
+  mecho "### Prepare disk step"
   yecho ">>> Creating disk partitions"
-  
-  yecho ">>> Available disks:"
-  lsblk -dpno NAME,SIZE,MODEL
-  echo
-  read -rp "Enter disk name (example: sdb): " DISK_NAME
-  DISK="/dev/$DISK_NAME"
-  
-  # Confirm
-  read -rp "!!! All data on $DISK will be erased. Continue? (y/n): " CONFIRM
-  if [[ "$CONFIRM" != "y" ]]; then 
-    yecho "Aborted."
-	exit 1;
-  fi
+
+  #Choosing disk
+  while true; do
+    yecho ">>> Available disks:"
+    lsblk -do NAME,SIZE,MODEL
+    echo
+
+    yecho "Enter disk name (example: sda): "
+    read -r DISK
+    DISK="/dev/$DISK"
+
+    if ! (lsblk -dno NAME | grep -q "^$DISK\$"); then
+      recho "!!! Wrong name of disk"
+      continue
+    fi
+
+    recho ">>> All data on $DISK will be erased. Continue? (y/N):"
+    read -r CONFIRM
+    if [[ "$CONFIRM" != "y" && "$CONFIRM" != "Y" ]]; then
+      yecho ">>> Aborted"
+      continue
+    fi
+
+    break
+  done
   
   yecho ">>> Erasing disk $DISK"
   wipefs -a "$DISK"
@@ -117,7 +151,7 @@ prepare_disk() {
   # EFI 1GB
   parted -s "$DISK" mkpart ESP fat32 1MiB 1025MiB
   parted -s "$DISK" set 1 boot on
-  # LVM rest
+  # LUKS rest
   parted -s "$DISK" mkpart primary 1025MiB 100%
 
   EFI_PART="${DISK}1"
@@ -136,11 +170,11 @@ prepare_disk() {
   lvcreate -L 8G vg0 -n swap
   lvcreate -l 100%FREE vg0 -n home
 
+  yecho ">>> Formatting partitions"
   VG0_PART="/dev/vg0"
   VG0_ROOT_PART="$VG0_PART/root"
   VG0_HOME_PART="$VG0_PART/home"
   VG0_SWAP_PART="$VG0_PART/swap"
-  yecho ">>> Formatting partitions"
   mkfs.fat -F32 "$EFI_PART"
   mkfs.ext4 "$VG0_ROOT_PART"
   mkfs.ext4 "$VG0_HOME_PART"
@@ -155,26 +189,28 @@ prepare_disk() {
   mount "$EFI_PART" /mnt/boot
   swapon "$VG0_SWAP_PART"
 
-  yecho ">>> Disk $DISK prepared successfully!"
+  mecho "### Prepare disk step finished"
 }
 
-prepare_disk
-
-#Install linux
+# Install default packages and drivers
+# Set language, timezone and hostname
+# Create user
+# Set LVM settings
 install_linux() {
-  local PROCESSOR REGION CITY LANGUAGE HOSTNAME MKINITCPIO_CONF HOOKS_LINE HOOKS_ARRAY NEW_HOOKS BOOTLOADER_ID LVM_DISK_UUID GRUB_FILE USER_NAME NEED_BLUETOOTH NEED_INTEL_VIDEO NEED_AMD_VIDEO NEED_NVIDIA_VIDEO
-  
-  yecho ">>> Installing Linux"
-  
+  local PROCESSOR REGION CITY LANGUAGE HOSTNAME MKINITCPIO_CONF HOOKS_LINE HOOKS_ARRAY NEW_HOOKS BOOTLOADER_ID LVM_DISK_UUID USER_NAME CHOICE
+
+  mecho "### Install linux step"
+
   #Intel / AMD ucode
   while true; do
-    read -rp "What processor do you have? (intel/amd) :" PROCESSOR
-	
-	if [[ "$PROCESSOR" == "amd" || "$PROCESSOR" == "intel" ]]; then
-	  break;
-	else
-	  recho "!!! Wrong name of processor"
-	fi
+    yecho "What processor do you have? (intel/amd):"
+    read -r PROCESSOR
+  
+    if [[ "$PROCESSOR" == "amd" || "$PROCESSOR" == "intel" ]]; then
+      break;
+    else
+      recho "!!! Wrong name of processor"
+    fi
   done
   
   #base linux linux-firmware - core
@@ -188,20 +224,24 @@ install_linux() {
   #pipewire pipewire-alsa pipewire-pulse pipewire-jack - for the new audio framework replacing pulse and jack
   #wireplumber - the pipewire session manager
   #networkmanager - network
+  yecho ">>> Installing basic packages"
   pacstrap /mnt base base-devel linux linux-firmware lvm2 nano sudo git "$PROCESSOR"-ucode grub efibootmgr pipewire pipewire-alsa pipewire-pulse pipewire-jack wireplumber networkmanager
 
   #Generate instructions for mounting disks as they are now
+  yecho ">>> Generating mount config"
   genfstab -U /mnt >> /mnt/etc/fstab
   
   #Choose fastest mirrors
-  yecho ">>> Updating mirros list"
+  yecho ">>> Updating mirrors list"
   arch-chroot /mnt pacman -S reflector
   arch-chroot /mnt reflector --protocol https --age 12 --completion-percent 97 --latest 100 --score 7 --sort rate --verbose --connection-timeout 180 --download-timeout 180 --save /etc/pacman.d/mirrorlist
   arch-chroot /mnt pacman -Syy
   
   #Setup root password
   yecho ">>> Setting up root password"
-  arch-chroot /mnt passwd
+  while ! arch-chroot /mnt passwd; do
+    recho "!!! Command failed, please try again"
+  done
   
   #Setup timezone
   yecho ">>> Setting up timezone"
@@ -209,9 +249,10 @@ install_linux() {
   while true; do
     yecho ">>> Available regions:"
     arch-chroot /mnt find /usr/share/zoneinfo -mindepth 1 -maxdepth 1 -type d -printf "%f\n" | sort | tr '\n' ' '
-	read -rp "Choose region: " REGION
-	
-	if arch-chroot /mnt test -d "/usr/share/zoneinfo/$REGION"; then
+    yecho "Choose region:"
+    read -r REGION
+  
+    if arch-chroot /mnt test -d "/usr/share/zoneinfo/$REGION"; then
       yecho ">>> Selected region: $REGION"
       break
     else
@@ -222,9 +263,10 @@ install_linux() {
   while true; do
     yecho ">>> Available cities:"
     arch-chroot /mnt find /usr/share/zoneinfo/"$REGION" -mindepth 1 -maxdepth 1 -printf "%f\n" | sort | tr '\n' ' '
-	read -rp "Choose city: " CITY
-	
-	if arch-chroot /mnt test -f "/usr/share/zoneinfo/$REGION/$CITY"; then
+    yecho "Choose city:"
+    read -r CITY
+  
+    if arch-chroot /mnt test -f "/usr/share/zoneinfo/$REGION/$CITY"; then
       yecho ">>> Selected city: $CITY"
       break
     else
@@ -240,12 +282,14 @@ install_linux() {
   arch-chroot /mnt nano /etc/locale.gen
   arch-chroot /mnt locale-gen
   
-  read -rp "Enter main language (example: en_US.UTF-8): " LANGUAGE
+  yecho "Enter main language (example: en_US.UTF-8): "
+  read -r LANGUAGE
   echo "LANG=$LANGUAGE" > /mnt/etc/locale.conf
   
   #Setup hostname
   yecho ">>> Setting up hostname"
-  read -rp "Enter hostname: " HOSTNAME
+  yecho "Enter hostname (computer name):"
+  read -r HOSTNAME
   echo "$HOSTNAME" > /mnt/etc/hostname
   
   #Enabling encryption in hooks
@@ -265,17 +309,17 @@ install_linux() {
   NEW_HOOKS=()
   
   for h in "${HOOKS_ARRAY[@]}"; do
-	#skip encrypt lvm2 if exist
+    #skip encrypt lvm2 if exist
     if [[ "$h" == "encrypt" || "$h" == "lvm2" ]]; then
-	  continue
-	fi
+      continue
+    fi
   
     if [[ "$h" == "filesystems" ]]; then
-	  NEW_HOOKS+=("encrypt")
-	  NEW_HOOKS+=("lvm2")
+      NEW_HOOKS+=("encrypt")
+      NEW_HOOKS+=("lvm2")
     fi
     
-	NEW_HOOKS+=("$h")
+    NEW_HOOKS+=("$h")
   done
   
   #Write result
@@ -287,33 +331,43 @@ install_linux() {
   
   #Setup bootloader
   yecho ">>> Setting up bootloader"
-  read -rp "Enter bootloader id: " BOOTLOADER_ID
+  yecho "Enter bootloader id (you will see it in F12):"
+  read -r BOOTLOADER_ID
   arch-chroot /mnt grub-install --target=x86_64-efi --efi-directory=/boot --bootloader-id="$BOOTLOADER_ID"
   mkdir /mnt/boot/EFI/BOOT
   cp /mnt/boot/EFI/"$BOOTLOADER_ID"/grubx64.efi /mnt/boot/EFI/BOOT/BOOTX64.EFI
   
   #Open lvm on load
-  LVM_DISK_UUID=$(blkid -s UUID -o value "$ROOT_PART")
-  GRUB_FILE="/mnt/etc/default/grub"
-  if ! grep -q "cryptdevice=UUID=$LVM_DISK_UUID:cryptlvm" "$GRUB_FILE"; then
-		append_conf_param GRUB_CMDLINE_LINUX "cryptdevice=UUID=$LVM_DISK_UUID:cryptlvm" "$GRUB_FILE"
+  if [ -z "$ROOT_PART" ]; then
+    while ! [ -b "$ROOT_PART" ]; do
+        yecho ">>> All partitions:"
+        lsblk -po NAME
+        yecho "Write full path to LUKS partition (example: /dev/sda2):"
+        read -r ROOT_PART
+    done
   fi
-  
+  LVM_DISK_UUID=$(blkid -s UUID -o value "$ROOT_PART")
+  append_conf_param GRUB_CMDLINE_LINUX "cryptdevice=UUID=$LVM_DISK_UUID:cryptlvm" "/mnt/etc/default/grub"
   arch-chroot /mnt grub-mkconfig -o /boot/grub/grub.cfg
   
   #Add user
   yecho ">>> Adding new user"
-  read -rp "Enter user name: " USER_NAME
+  yecho "Enter user name:"
+  read -r USER_NAME
   arch-chroot /mnt useradd -m -G wheel "$USER_NAME"
-  arch-chroot /mnt passwd "$USER_NAME"
+  while ! arch-chroot /mnt passwd "$USER_NAME"; do
+    recho "!!! Command failed, please try again"
+  done
   #Uncomment line
   sed -i 's/^#\s*%wheel ALL=(ALL:ALL) ALL/%wheel ALL=(ALL:ALL) ALL/' /mnt/etc/sudoers
   
   #Install bluetooth
   yecho ">>> Installing bluetooth"
-  read -rp "Do you need bluetooth support? (y/n): " NEED_BLUETOOTH
-  if [[ "$NEED_BLUETOOTH" == "y" ]]; then
+  yecho "Do you need bluetooth support? (y/N):"
+  read -r CHOICE
+  if [[ "$CHOICE" == "y" || "$CHOICE" == "Y" ]]; then
     arch-chroot /mnt pacman -S --needed bluez bluez-utils
+    arch-chroot /mnt systemctl enable bluetooth
   fi
   
   #Install disks extra
@@ -327,39 +381,49 @@ install_linux() {
   arch-chroot /mnt pacman -Syu
 
   #https://wiki.archlinux.org/title/Intel_graphics
-  read -rp "Do you need Intel video driver? {y/n): " NEED_INTEL_VIDEO
-  if [[ "$NEED_INTEL_VIDEO" == "y" ]]; then
+  CHOICE=""
+  yecho "Do you need Intel video driver? {y/N):"
+  read -r CHOICE
+  if [[ "$CHOICE" == "y" || "$CHOICE" == "Y" ]]; then
     arch-chroot /mnt pacman -S --needed mesa lib32-mesa vulkan-intel lib32-vulkan-intel
   fi
 
-	#https://wiki.archlinux.org/title/AMDGPU
-  read -rp "Do you need AMD video driver? {y/n): " NEED_AMD_VIDEO
-  if [[ "$NEED_AMD_VIDEO" == "y" ]]; then
+  #https://wiki.archlinux.org/title/AMDGPU
+  CHOICE=""
+  yecho "Do you need AMD video driver? {y/N):"
+  read -r CHOICE
+  if [[ "$CHOICE" == "y" || "$CHOICE" == "Y" ]]; then
     arch-chroot /mnt pacman -S --needed mesa lib32-mesa vulkan-radeon lib32-vulkan-radeon xf86-video-amdgpu
   fi
 
   #https://wiki.archlinux.org/title/Nouveau
-  read -rp "Do you need Nvidia video driver? {y/n): " NEED_NVIDIA_VIDEO
-  if [[ "$NEED_NVIDIA_VIDEO" == "y" ]]; then
+  CHOICE=""
+  yecho "Do you need Nvidia video driver? {y/N):"
+  read -r CHOICE
+  if [[ "$CHOICE" == "y" || "$CHOICE" == "Y" ]]; then
     arch-chroot /mnt pacman -S --needed mesa lib32-mesa vulkan-nouveau lib32-vulkan-nouveau xf86-video-nouveau
 
-	#https://wiki.archlinux.org/title/PRIME
-    read -rp "Do you PRIME for hybrid system? {y/n): " NEED_NVIDIA_VIDEO
-    if [[ "$NEED_NVIDIA_VIDEO" == "y" ]]; then
-	  echo '# Enable runtime PM for NVIDIA VGA/3D controller devices on driver bind' >> /mnt/etc/udev/rules.d/80-nvidia-pm.rules
+    #https://wiki.archlinux.org/title/PRIME
+    CHOICE=""
+    yecho "Do you PRIME for hybrid system? {y/N):"
+    read -r CHOICE
+    if [[ "$CHOICE" == "y" || "$CHOICE" == "Y" ]]; then
+      echo '# Enable runtime PM for NVIDIA VGA/3D controller devices on driver bind' >> /mnt/etc/udev/rules.d/80-nvidia-pm.rules
       echo 'ACTION=="bind", SUBSYSTEM=="pci", ATTR{vendor}=="0x10de", ATTR{class}=="0x030000", TEST=="power/control", ATTR{power/control}="auto"' >> /mnt/etc/udev/rules.d/80-nvidia-pm.rules
       echo 'ACTION=="bind", SUBSYSTEM=="pci", ATTR{vendor}=="0x10de", ATTR{class}=="0x030200", TEST=="power/control", ATTR{power/control}="auto"' >> /mnt/etc/udev/rules.d/80-nvidia-pm.rules
 
       echo '# Disable runtime PM for NVIDIA VGA/3D controller devices on driver unbind' >> /mnt/etc/udev/rules.d/80-nvidia-pm.rules
       echo 'ACTION=="unbind", SUBSYSTEM=="pci", ATTR{vendor}=="0x10de", ATTR{class}=="0x030000", TEST=="power/control", ATTR{power/control}="on"' >> /mnt/etc/udev/rules.d/80-nvidia-pm.rules
       echo 'ACTION=="unbind", SUBSYSTEM=="pci", ATTR{vendor}=="0x10de", ATTR{class}=="0x030200", TEST=="power/control", ATTR{power/control}="on"' >> /mnt/etc/udev/rules.d/80-nvidia-pm.rules
-	  
-	  read -rp "Is the videocard Ampere+? {y/n): " NEED_NVIDIA_VIDEO
-	  if [[ "$NEED_NVIDIA_VIDEO" == "y" ]]; then
-	    echo 'options nvidia "NVreg_DynamicPowerManagement=0x03"' >> /mnt/etc/modprobe.d/nvidia-pm.conf
-	  else
-		echo 'options nvidia "NVreg_DynamicPowerManagement=0x02"' >> /mnt/etc/modprobe.d/nvidia-pm.conf
-	  fi
+
+      CHOICE=""
+      yecho "Is the videocard Ampere+? {y/N):"
+      read -r CHOICE
+      if [[ "$CHOICE" == "y" || "$CHOICE" == "Y" ]]; then
+        echo 'options nvidia "NVreg_DynamicPowerManagement=0x03"' >> /mnt/etc/modprobe.d/nvidia-pm.conf
+      else
+        echo 'options nvidia "NVreg_DynamicPowerManagement=0x02"' >> /mnt/etc/modprobe.d/nvidia-pm.conf
+      fi
     fi
   fi
   
@@ -369,70 +433,102 @@ install_linux() {
   arch-chroot /mnt systemctl enable fstrim.timer #ssd optimisation
   arch-chroot /mnt sysctl vm.swappiness=0 #ssd optimisation
   
-  if [[ "$NEED_BLUETOOTH" == "y" ]]; then
-    arch-chroot /mnt systemctl enable bluetooth
-  fi
-  
-  yecho ">>> Finished basic linux installation"
+  mecho "### Install linux step finished"
 }
 
-install_linux
+install_kde() {
+    # plasma-desktop: the barebones plasma environment.
+    # plasma-pa: the KDE audio applet.
+    # plasma-nm: the KDE network applet.
+    # plasma-systemmonitor: the KDE task manager.
+    # plasma-firewall: the KDE firewall.
+    # kscreen: the KDE display configurator.
+    # kwalletmanager: manage secure vaults ( needed to store the passwords of local applications in an encrypted format ). This also installs kwallet as a dependency, so I don't need to specify it.
+    # kwallet-pam: automatically unlocks secure vault upon login ( without this, each time the wallet gets queried it asks for your password to unlock it ).
+    # bluedevil: the KDE bluetooth manager.
+    # powerdevil: the KDE power manager.
+    # power-profiles-daemon: adds 3 power profiles selectable from powerdevil ( power saving, balanced, performance ). Make sure that its service is enabled and running ( it should be ).
+    # kdeplasma-addons: some useful addons.
+    # xdg-desktop-portal-kde: better integrates the plasma desktop in various windows like file pickers.
+    # kde-gtk-config: the native settings integration to manage GTK theming.
+    # breeze-gtk: the breeze GTK theme.
+    # cups, print-manager: the CUPS print service and the KDE front-end.
+    # konsole: the KDE terminal.
+    # dolphin dolphin-plugins: the KDE file manager.
+    # ffmpegthumbs: video thumbnailer for dolphin.
+    # kate: the KDE text editor.
+    # okular: the KDE pdf viewer.
+    # gwenview: the KDE image viewer.
+    # ark: the KDE archive manager.
+    # spectacle: the KDE screenshot tool.
+    # haruna: mediaplayer
+    # discover: app manager
+    arch-chroot /mnt pacman -S --needed plasma-desktop plasma-pa plasma-nm plasma-systemmonitor plasma-firewall kscreen kwalletmanager kwallet-pam bluedevil powerdevil power-profiles-daemon kdeplasma-addons xdg-desktop-portal-kde kde-gtk-config breeze-gtk cups print-manager konsole dolphin dolphin-plugins ffmpegthumbs kate okular gwenview ark spectacle haruna discover
+}
 
 install_desktop() {
-	yecho ">>> Installing desktop environment"
-	# plasma-desktop: the barebones plasma environment.
-	# plasma-pa: the KDE audio applet.
-	# plasma-nm: the KDE network applet.
-	# plasma-systemmonitor: the KDE task manager.
-	# plasma-firewall: the KDE firewall.
-	# kscreen: the KDE display configurator.
-	# kwalletmanager: manage secure vaults ( needed to store the passwords of local applications in an encrypted format ). This also installs kwallet as a dependency, so I don't need to specify it.
-	# kwallet-pam: automatically unlocks secure vault upon login ( without this, each time the wallet gets queried it asks for your password to unlock it ).
-	# bluedevil: the KDE bluetooth manager.
-	# powerdevil: the KDE power manager.
-	# power-profiles-daemon: adds 3 power profiles selectable from powerdevil ( power saving, balanced, performance ). Make sure that its service is enabled and running ( it should be ).
-	# kdeplasma-addons: some useful addons.
-	# xdg-desktop-portal-kde: better integrates the plasma desktop in various windows like file pickers.
-	# kde-gtk-config: the native settings integration to manage GTK theming.
-	# breeze-gtk: the breeze GTK theme.
-	# cups, print-manager: the CUPS print service and the KDE front-end.
-	# konsole: the KDE terminal.
-	# dolphin dolphin-plugins: the KDE file manager.
-	# ffmpegthumbs: video thumbnailer for dolphin.
-	# kate: the KDE text editor.
-	# okular: the KDE pdf viewer.
-	# gwenview: the KDE image viewer.
-	# ark: the KDE archive manager.
-	# spectacle: the KDE screenshot tool.
-	# haruna: mediaplayer
-	# discover: app manager
-	arch-chroot /mnt pacman -S --needed plasma-desktop plasma-pa plasma-nm plasma-systemmonitor plasma-firewall kscreen kwalletmanager kwallet-pam bluedevil powerdevil power-profiles-daemon kdeplasma-addons xdg-desktop-portal-kde kde-gtk-config breeze-gtk cups print-manager konsole dolphin dolphin-plugins ffmpegthumbs kate okular gwenview ark spectacle haruna discover
+  mecho "### Install desktop step"
 
-	#environment manager
-	yecho ">>> Installing environment manager"
-	arch-chroot /mnt pacman -S --needed ly
-	arch-chroot /mnt systemctl enable ly
-	replace_conf_param animation colormix /mnt/etc/ly/config.ini
-	replace_conf_param bigclock en /mnt/etc/ly/config.ini
+  install_kde
 
-	#flatpak
-	yecho ">>> Installing flatpak"
-	arch-chroot /mnt pacman -S --needed flatpak
-	arch-chroot /mnt flatpak remote-add --if-not-exists flathub https://flathub.org/repo/flathub.flatpakrepo
+  #environment manager
+  yecho ">>> Installing environment manager"
+  arch-chroot /mnt pacman -S --needed ly
+  arch-chroot /mnt systemctl enable ly
+  replace_conf_param animation colormix /mnt/etc/ly/config.ini
+  replace_conf_param bigclock en /mnt/etc/ly/config.ini
 
-	#zen browser
-	yecho ">>> Installing zen browser"
-	arch-chroot /mnt flatpak install flathub app.zen_browser.zen
+  #flatpak
+  yecho ">>> Installing flatpak"
+  arch-chroot /mnt pacman -S --needed flatpak
+  arch-chroot /mnt flatpak remote-add --if-not-exists flathub https://flathub.org/repo/flathub.flatpakrepo
 
-    #kando
-	yecho ">>> Installing kando"
-	arch-chroot /mnt flatpak install flathub menu.kando.Kando
+  #zen browser
+  yecho ">>> Installing zen browser"
+  arch-chroot /mnt flatpak install flathub app.zen_browser.zen
+
+  #kando
+  yecho ">>> Installing kando"
+  arch-chroot /mnt flatpak install flathub menu.kando.Kando
+
+  mecho "### Install desktop step finished"
 }
 
-install_desktop
+if [ $# -eq 0 ] || contains_input "-help"; then
+  print_help
+  exit 0
+fi
 
-read -rp "Reboot? (y/n) " CONFIRM
-if [[ "$CONFIRM" == "y" ]]; then
+#Check network
+while true; do
+  if ping -c 3 archlinux.org; then
+    yecho ">>> Internet is up!"
+    break
+  else
+    recho "!!! No Internet connection"
+    connect_wifi
+  fi
+done
+
+if contains_input "-default"; then
+  prepare_disk
+  install_linux
+  install_desktop
+else
+  if contains_input "-disk"; then
+    prepare_disk
+  fi
+  if contains_input "-linux"; then
+    install_linux
+  fi
+  if contains_input "-desktop"; then
+    install_desktop
+  fi
+fi
+
+yecho "Reboot? (y/N)"
+read -r CONFIRM
+if [[ "$CONFIRM" == "y" || "$CONFIRM" == "Y" ]]; then
   swapoff --all
   umount -R /mnt
   vgchange -an vg0
