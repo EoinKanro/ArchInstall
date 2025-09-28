@@ -142,7 +142,7 @@ prepare_disk() {
 
     recho ">>> All data on $DISK will be erased. Continue? (y/N):"
     read -r CONFIRM
-    if [[ "$CONFIRM" != "y" && "$CONFIRM" != "Y" ]]; then
+    if ! (is_yes "$CONFIRM"); then
       yecho ">>> Aborted"
       continue
     fi
