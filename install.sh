@@ -16,6 +16,10 @@ is_yes() {
   [[ "$1" == "y" || "$1" == "Y" ]]
 }
 
+is_number() {
+  [[ "$1" =~ ^[0-9]+$ ]]
+}
+
 print_help() {
   yecho "ArhInstall usage:"
   echo
@@ -116,7 +120,7 @@ connect_wifi() {
 
 #Format one disk using LUKS LVM and mount to /mnt
 prepare_disk() {
-  local DISK CONFIRM EFI_PART SWAP_SIZE VG0_PART VG0_ROOT_PART VG0_HOME_PART VG0_SWAP_PART
+  local DISK CONFIRM EFI_PART SWAP_SIZE ROOT_SIZE VG0_PART VG0_ROOT_PART VG0_HOME_PART VG0_SWAP_PART
 
   mecho "### Prepare disk step"
   yecho ">>> Creating disk partitions"
@@ -167,6 +171,19 @@ prepare_disk() {
   cryptsetup open "$ROOT_PART" cryptlvm
 
   while true; do
+    yecho ">>> Selecting root size"
+
+    echo
+    yecho "Enter root size in GB (disk part for main arch programs, not games, etc): "
+    read -r ROOT_SIZE
+    if ! (is_number "$ROOT_SIZE"); then
+      recho "!!! Wrong value"
+      continue
+    fi
+    break
+  done
+
+  while true; do
     yecho ">>> Selecting swap size"
 
     echo
@@ -183,7 +200,7 @@ prepare_disk() {
 
     yecho "Enter swap size in GB:"
     read -r SWAP_SIZE
-    if ! [[ "$SWAP_SIZE" =~ ^[0-9]+$ ]]; then
+    if ! (is_number "$SWAP_SIZE"); then
       recho "!!! Wrong value"
       continue
     fi
@@ -194,7 +211,7 @@ prepare_disk() {
   yecho ">>> Creating LVM volumes"
   pvcreate /dev/mapper/cryptlvm
   vgcreate vg0 /dev/mapper/cryptlvm
-  lvcreate -L 50G vg0 -n root
+  lvcreate -L "$ROOT_SIZE"G vg0 -n root
   lvcreate -L "$SWAP_SIZE"G vg0 -n swap
   lvcreate -l 100%FREE vg0 -n home
 
