@@ -112,7 +112,7 @@ connect_wifi() {
 
 #Format one disk using LUKS LVM and mount to /mnt
 prepare_disk() {
-  local DISK CONFIRM EFI_PART VG0_PART VG0_ROOT_PART VG0_HOME_PART VG0_SWAP_PART
+  local DISK CONFIRM EFI_PART SWAP_SIZE VG0_PART VG0_ROOT_PART VG0_HOME_PART VG0_SWAP_PART
 
   mecho "### Prepare disk step"
   yecho ">>> Creating disk partitions"
@@ -162,12 +162,36 @@ prepare_disk() {
   cryptsetup luksFormat "$ROOT_PART"
   cryptsetup open "$ROOT_PART" cryptlvm
 
+  while true; do
+    yecho ">>> Selecting swap size"
+
+    echo
+    recho "Recommendations:"
+    yecho "With hibernation (not suspension):"
+    yecho "# 1.1 * RAM size"
+    yecho "Without hibernation:"
+    yecho "# 2 * RAM size - with < 4 GB RAM"
+    yecho "# RAM size - with 4 - 8 GB RAM"
+    yecho "# 4 - 8 GB - with 8 - 16 GB RAM"
+    yecho "# 2 - 4 GB - with 16 - 32 GB RAM"
+    yecho "# 2 GB - with 32+ GB RAM"
+    echo
+
+    yecho "Enter swap size in GB:"
+    read -r SWAP_SIZE
+    if ! [[ "$SWAP_SIZE" =~ ^[0-9]+$ ]]; then
+      recho "!!! Wrong value"
+      continue
+    fi
+    break
+  done
+
   #Create lvm volumes
   yecho ">>> Creating LVM volumes"
   pvcreate /dev/mapper/cryptlvm
   vgcreate vg0 /dev/mapper/cryptlvm
   lvcreate -L 50G vg0 -n root
-  lvcreate -L 8G vg0 -n swap
+  lvcreate -L "$SWAP_SIZE"G vg0 -n swap
   lvcreate -l 100%FREE vg0 -n home
 
   yecho ">>> Formatting partitions"
