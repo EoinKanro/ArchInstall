@@ -12,6 +12,10 @@ recho() {
   echo -e "\e[31m$1\e[0m"
 }
 
+is_yes() {
+  [[ "$1" == "y" || "$1" == "Y" ]]
+}
+
 print_help() {
   yecho "ArhInstall usage:"
   echo
@@ -389,7 +393,7 @@ install_linux() {
   yecho ">>> Installing bluetooth"
   yecho "Do you need bluetooth support? (y/N):"
   read -r CHOICE
-  if [[ "$CHOICE" == "y" || "$CHOICE" == "Y" ]]; then
+  if is_yes "$CHOICE"; then
     arch-chroot /mnt pacman -S --needed bluez bluez-utils
     arch-chroot /mnt systemctl enable bluetooth
   fi
@@ -408,7 +412,7 @@ install_linux() {
   CHOICE=""
   yecho "Do you need Intel video driver? {y/N):"
   read -r CHOICE
-  if [[ "$CHOICE" == "y" || "$CHOICE" == "Y" ]]; then
+  if is_yes "$CHOICE"; then
     arch-chroot /mnt pacman -S --needed mesa lib32-mesa vulkan-intel lib32-vulkan-intel
   fi
 
@@ -416,7 +420,7 @@ install_linux() {
   CHOICE=""
   yecho "Do you need AMD video driver? {y/N):"
   read -r CHOICE
-  if [[ "$CHOICE" == "y" || "$CHOICE" == "Y" ]]; then
+  if is_yes "$CHOICE"; then
     arch-chroot /mnt pacman -S --needed mesa lib32-mesa vulkan-radeon lib32-vulkan-radeon xf86-video-amdgpu
   fi
 
@@ -424,14 +428,14 @@ install_linux() {
   CHOICE=""
   yecho "Do you need Nvidia video driver? {y/N):"
   read -r CHOICE
-  if [[ "$CHOICE" == "y" || "$CHOICE" == "Y" ]]; then
+  if is_yes "$CHOICE"; then
     arch-chroot /mnt pacman -S --needed mesa lib32-mesa vulkan-nouveau lib32-vulkan-nouveau xf86-video-nouveau
 
     #https://wiki.archlinux.org/title/PRIME
     CHOICE=""
     yecho "Do you PRIME for hybrid system? {y/N):"
     read -r CHOICE
-    if [[ "$CHOICE" == "y" || "$CHOICE" == "Y" ]]; then
+    if is_yes "$CHOICE"; then
       echo '# Enable runtime PM for NVIDIA VGA/3D controller devices on driver bind' >> /mnt/etc/udev/rules.d/80-nvidia-pm.rules
       echo 'ACTION=="bind", SUBSYSTEM=="pci", ATTR{vendor}=="0x10de", ATTR{class}=="0x030000", TEST=="power/control", ATTR{power/control}="auto"' >> /mnt/etc/udev/rules.d/80-nvidia-pm.rules
       echo 'ACTION=="bind", SUBSYSTEM=="pci", ATTR{vendor}=="0x10de", ATTR{class}=="0x030200", TEST=="power/control", ATTR{power/control}="auto"' >> /mnt/etc/udev/rules.d/80-nvidia-pm.rules
@@ -443,7 +447,7 @@ install_linux() {
       CHOICE=""
       yecho "Is the videocard Ampere+? {y/N):"
       read -r CHOICE
-      if [[ "$CHOICE" == "y" || "$CHOICE" == "Y" ]]; then
+      if is_yes "$CHOICE"; then
         echo 'options nvidia "NVreg_DynamicPowerManagement=0x03"' >> /mnt/etc/modprobe.d/nvidia-pm.conf
       else
         echo 'options nvidia "NVreg_DynamicPowerManagement=0x02"' >> /mnt/etc/modprobe.d/nvidia-pm.conf
@@ -552,7 +556,7 @@ fi
 
 yecho "Reboot? (y/N)"
 read -r CONFIRM
-if [[ "$CONFIRM" == "y" || "$CONFIRM" == "Y" ]]; then
+if is_yes "$CONFIRM"; then
   swapoff --all
   umount -R /mnt
   vgchange -an vg0
