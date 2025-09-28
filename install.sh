@@ -465,39 +465,84 @@ install_linux() {
 }
 
 install_kde() {
-    # plasma-desktop: the barebones plasma environment.
-    # plasma-pa: the KDE audio applet.
-    # plasma-nm: the KDE network applet.
-    # plasma-systemmonitor: the KDE task manager.
-    # plasma-firewall: the KDE firewall.
-    # kscreen: the KDE display configurator.
-    # kwalletmanager: manage secure vaults ( needed to store the passwords of local applications in an encrypted format ). This also installs kwallet as a dependency, so I don't need to specify it.
-    # kwallet-pam: automatically unlocks secure vault upon login ( without this, each time the wallet gets queried it asks for your password to unlock it ).
-    # bluedevil: the KDE bluetooth manager.
-    # powerdevil: the KDE power manager.
-    # power-profiles-daemon: adds 3 power profiles selectable from powerdevil ( power saving, balanced, performance ). Make sure that its service is enabled and running ( it should be ).
-    # kdeplasma-addons: some useful addons.
-    # xdg-desktop-portal-kde: better integrates the plasma desktop in various windows like file pickers.
-    # kde-gtk-config: the native settings integration to manage GTK theming.
-    # breeze-gtk: the breeze GTK theme.
-    # cups, print-manager: the CUPS print service and the KDE front-end.
-    # konsole: the KDE terminal.
-    # dolphin dolphin-plugins: the KDE file manager.
-    # ffmpegthumbs: video thumbnailer for dolphin.
-    # kate: the KDE text editor.
-    # okular: the KDE pdf viewer.
-    # gwenview: the KDE image viewer.
-    # ark: the KDE archive manager.
-    # spectacle: the KDE screenshot tool.
-    # haruna: mediaplayer
-    # discover: app manager
-    arch-chroot /mnt pacman -S --needed plasma-desktop plasma-pa plasma-nm plasma-systemmonitor plasma-firewall kscreen kwalletmanager kwallet-pam bluedevil powerdevil power-profiles-daemon kdeplasma-addons xdg-desktop-portal-kde kde-gtk-config breeze-gtk cups print-manager konsole dolphin dolphin-plugins ffmpegthumbs kate okular gwenview ark spectacle haruna discover
+  # plasma-desktop: the barebones plasma environment.
+  # plasma-pa: the KDE audio applet.
+  # plasma-nm: the KDE network applet.
+  # plasma-systemmonitor: the KDE task manager.
+  # plasma-firewall: the KDE firewall.
+  # kscreen: the KDE display configurator.
+  # kwalletmanager: manage secure vaults ( needed to store the passwords of local applications in an encrypted format ). This also installs kwallet as a dependency, so I don't need to specify it.
+  # kwallet-pam: automatically unlocks secure vault upon login ( without this, each time the wallet gets queried it asks for your password to unlock it ).
+  # bluedevil: the KDE bluetooth manager.
+  # powerdevil: the KDE power manager.
+  # power-profiles-daemon: adds 3 power profiles selectable from powerdevil ( power saving, balanced, performance ). Make sure that its service is enabled and running ( it should be ).
+  # kdeplasma-addons: some useful addons.
+  # xdg-desktop-portal-kde: better integrates the plasma desktop in various windows like file pickers.
+  # kde-gtk-config: the native settings integration to manage GTK theming.
+  # breeze-gtk: the breeze GTK theme.
+  # cups, print-manager: the CUPS print service and the KDE front-end.
+  # konsole: the KDE terminal.
+  # dolphin dolphin-plugins: the KDE file manager.
+  # ffmpegthumbs: video thumbnailer for dolphin.
+  # kate: the KDE text editor.
+  # okular: the KDE pdf viewer.
+  # gwenview: the KDE image viewer.
+  # ark: the KDE archive manager.
+  # spectacle: the KDE screenshot tool.
+  # haruna: mediaplayer
+  # discover: app manager
+  arch-chroot /mnt pacman -S --needed plasma-desktop plasma-pa plasma-nm plasma-systemmonitor plasma-firewall kscreen kwalletmanager kwallet-pam bluedevil powerdevil power-profiles-daemon kdeplasma-addons xdg-desktop-portal-kde kde-gtk-config breeze-gtk cups print-manager konsole dolphin dolphin-plugins ffmpegthumbs kate okular gwenview ark spectacle haruna discover
+}
+
+install_hyprland() {
+  yecho ">>> Installing base hyprland package"
+  # hyprland: base hyprland packages
+  arch-chroot /mnt pacman -S --needed hyprland
+
+  # hypridle: Hyprland’s idle management daemon
+  # hyprlock: screen lock for Hyprland
+  # hyprcursor: a new cursor theme format
+  # xdg-desktop-portal-hyprland: handles a lot of stuff for your desktop, like file pickers, screensharing, etc
+  # hyprpolkitagent: pop up a window asking you for a password whenever an app wants to elevate its privileges
+  # qt6-wayland: qt support, some graphical stuff
+  # hyprland-qt-support: provides a QML style for hypr* qt6 apps
+  # noto-fonts noto-fonts-cjk noto-fonts-emoji noto-fonts-extra - font's to not see squares
+  # rofi: A window switcher, application launcher and dmenu replacement
+  # hyprpicker: color picker
+  # nemo: Cinnamon file manager
+  # nemo-fileroller: extension for archives
+  # nm-applet: gui for network manager
+  yecho ">>> Additional packages installation"
+  recho "Don't install it if you are going to use dotfiles like end_4's Hyprland dotfiles"
+  recho "https://github.com/end-4/dots-hyprland"
+  arch-chroot /mnt pacman -S --needed hypridle hyprlock hyprcursor xdg-desktop-portal-hyprland hyprpolkitagent qt6-wayland hyprland-qt-support noto-fonts noto-fonts-cjk noto-fonts-emoji noto-fonts-extra rofi hyprpicker nemo nemo-fileroller nm-applet
+
+  #todo https://wiki.hypr.land/Useful-Utilities/Clipboard-Managers/ clipse?
+  #todo https://wiki.hypr.land/Hypr-Ecosystem/hypridle/
+  #todo https://wiki.hypr.land/Hypr-Ecosystem/hyprcursor/
+
+  yecho "For customization you can read wiki: https://wiki.hypr.land/Configuring/"
 }
 
 install_desktop() {
+  local DE
   mecho "### Install desktop step"
 
-  install_kde
+  while true; do
+    yecho "What desktop environment to install? (1-kde plasma / 2-hyprland: NOT RECOMMENDED WITH NVIDIA):"
+    read -r DE
+    if [[ "$DE" != "1" && "$DE" != "2" ]]; then
+      recho "!!! Wrong answer"
+      continue
+    fi
+
+    if [[ "$DE" == "1" ]]; then
+      install_kde
+    else
+      install_hyprland
+    fi
+    break
+  done
 
   #environment manager
   yecho ">>> Installing environment manager"
