@@ -20,6 +20,10 @@ is_number() {
   [[ "$1" =~ ^[0-9]+$ ]]
 }
 
+is_nvme() {
+  [[ "$1" == *nvme* ]]
+}
+
 print_help() {
   yecho "ArhInstall usage:"
   echo
@@ -138,12 +142,13 @@ prepare_disk() {
 
     yecho "Enter disk name (example: sda): "
     read -r DISK
-    DISK="/dev/$DISK"
 
     if ! (lsblk -dno NAME | grep -q "^$DISK\$"); then
       recho "!!! Wrong name of disk"
       continue
     fi
+
+    DISK="/dev/$DISK"
 
     recho ">>> All data on $DISK will be erased. Continue? (y/N):"
     read -r CONFIRM
@@ -154,9 +159,6 @@ prepare_disk() {
 
     break
   done
-
-  yecho "Is it ssd? (y/n):"
-  read -r IS_SSD
   
   yecho ">>> Erasing disk $DISK"
   wipefs -a "$DISK"
@@ -170,8 +172,18 @@ prepare_disk() {
   # LUKS rest
   parted -s "$DISK" mkpart primary 1025MiB 100%
 
-  EFI_PART="${DISK}1"
-  ROOT_PART="${DISK}2"
+  if is_nvme "$DISK"; then
+    IS_SSD="y"
+
+    EFI_PART="${DISK}p1"
+    ROOT_PART="${DISK}p2"
+  else
+    yecho "Is it ssd? (y/n):"
+    read -r IS_SSD
+
+    EFI_PART="${DISK}1"
+    ROOT_PART="${DISK}2"
+  fi
 
   #Init LUKS
   yecho ">>> Setting up LUKS encryption on root"
@@ -204,6 +216,7 @@ prepare_disk() {
     recho "Recommendations:"
     yecho "With hibernation (not suspension):"
     yecho "# 1.1 * RAM size"
+    echo
     yecho "Without hibernation:"
     yecho "# 2 * RAM size - with < 4 GB RAM"
     yecho "# RAM size - with 4 - 8 GB RAM"
@@ -256,7 +269,7 @@ prepare_disk() {
 # Create user
 # Set LVM settings
 install_linux() {
-  local PROCESSOR REGION CITY LANGUAGE HOSTNAME MKINITCPIO_CONF HOOKS_LINE HOOKS_ARRAY NEW_HOOKS BOOTLOADER_ID LVM_DISK_UUID USER_NAME CHOICE NVIDIA_DRIVER
+  local PROCESSOR REGION CITY LANGUAGE HOSTNAME MKINITCPIO_CONF HOOKS_LINE HOOKS_ARRAY NEW_HOOKS BOOTLOADER_ID LVM_DISK_UUID USER_NAME CHOICE NVIDIA_DRIVER PACKAGE
 
   mecho "### Install linux step"
 
@@ -273,7 +286,7 @@ install_linux() {
   done
   
   #base linux linux-firmware - core
-  #base-devel - base development stuff
+  #base-devel go - base development stuff
   #lvm2 - for loading encrypted disk
   #nano - my favorite editor
   #sudo - for sudo users
@@ -284,7 +297,7 @@ install_linux() {
   #wireplumber - the pipewire session manager
   #networkmanager - network
   yecho ">>> Installing basic packages"
-  pacstrap /mnt base base-devel linux linux-firmware linux-headers lvm2 nano sudo git "$PROCESSOR"-ucode grub efibootmgr pipewire pipewire-alsa pipewire-pulse pipewire-jack wireplumber networkmanager
+  pacstrap /mnt base base-devel go linux linux-firmware linux-headers lvm2 nano sudo git "$PROCESSOR"-ucode grub efibootmgr pipewire pipewire-alsa pipewire-pulse pipewire-jack wireplumber networkmanager
 
   #Generate instructions for mounting disks as they are now
   yecho ">>> Generating mount config"
@@ -308,6 +321,7 @@ install_linux() {
   while true; do
     yecho ">>> Available regions:"
     arch-chroot /mnt find /usr/share/zoneinfo -mindepth 1 -maxdepth 1 -type d -printf "%f\n" | sort | tr '\n' ' '
+    echo
     yecho "Choose region:"
     read -r REGION
   
@@ -322,6 +336,7 @@ install_linux() {
   while true; do
     yecho ">>> Available cities:"
     arch-chroot /mnt find /usr/share/zoneinfo/"$REGION" -mindepth 1 -maxdepth 1 -printf "%f\n" | sort | tr '\n' ' '
+    echo
     yecho "Choose city:"
     read -r CITY
   
@@ -437,23 +452,26 @@ install_linux() {
 
   #Install yay aur
   yecho ">>> Installing yay"
-arch-chroot /mnt /bin/bash <<'EOF'
-  su - "$USER_NAME" -c "git clone https://aur.archlinux.org/yay.git /tmp/yay"
-  su - "$USER_NAME" -c "cd /tmp/yay && makepkg -si --noconfirm"
-EOF
+  arch-chroot /mnt mkdir /my_temp
+  arch-chroot /mnt git clone https://aur.archlinux.org/yay.git /my_temp/yay
+  arch-chroot /mnt chown -R "$USER_NAME" /my_temp
+  arch-chroot /mnt su - "$USER_NAME" -c "makepkg -f -D /my_temp/yay"
+  PACKAGE=$(ls /mnt/my_temp/yay | grep "pkg.tar.zst" | grep -v debug)
+  arch-chroot /mnt pacman -U /my_temp/yay/"$PACKAGE"
+  rm -rf /mnt/my_temp
 
   #Install video drivers
   yecho ">>> Installing video drivers"
 
   #https://wiki.archlinux.org/title/Intel_graphics
-  yecho "Do you need Intel video driver? {y/N):"
+  yecho "Do you need Intel video driver? (y/N):"
   read -r CHOICE
   if is_yes "$CHOICE"; then
     arch-chroot /mnt pacman -S --needed mesa lib32-mesa vulkan-intel lib32-vulkan-intel
   fi
 
   #https://wiki.archlinux.org/title/AMDGPU
-  yecho "Do you need AMD video driver? {y/N):"
+  yecho "Do you need AMD video driver? (y/N):"
   read -r CHOICE
   if is_yes "$CHOICE"; then
     arch-chroot /mnt pacman -S --needed mesa lib32-mesa vulkan-radeon lib32-vulkan-radeon xf86-video-amdgpu
@@ -465,7 +483,7 @@ EOF
   read -r CHOICE
   if is_yes "$CHOICE"; then
 
-    yecho "Is your videocard RTX 2060+? (y/n):"
+    yecho "Is your videocard RTX 2060+? (y/N):"
     read -r CHOICE
     if is_yes "$CHOICE"; then
       NVIDIA_DRIVER="nvidia-open-dkms"
@@ -482,6 +500,7 @@ EOF
     arch-chroot /mnt grub-mkconfig -o /boot/grub/grub.cfg
 
     append_conf_param "MODULES" "nvidia nvidia_modeset nvidia_uvm nvidia_drm" "/mnt/etc/mkinitcpio.conf"
+    echo "blacklist nouveau" > /mnt/etc/modprobe.d/blacklist-nouveau.conf
     arch-chroot /mnt mkinitcpio -P
 
     #https://wiki.archlinux.org/title/PRIME
