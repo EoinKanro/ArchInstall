@@ -154,6 +154,9 @@ prepare_disk() {
 
     break
   done
+
+  yecho "Is it ssd? (y/n):"
+  read -r IS_SSD
   
   yecho ">>> Erasing disk $DISK"
   wipefs -a "$DISK"
@@ -173,7 +176,13 @@ prepare_disk() {
   #Init LUKS
   yecho ">>> Setting up LUKS encryption on root"
   cryptsetup luksFormat "$ROOT_PART"
-  cryptsetup open "$ROOT_PART" cryptlvm
+
+  #ssd optimisation
+  if is_yes "$IS_SSD"; then
+    cryptsetup --perf-no_read_workqueue --perf-no_write_workqueue --persistent open "$ROOT_PART" cryptlvm
+  else
+    cryptsetup open "$ROOT_PART" cryptlvm
+  fi
 
   while true; do
     yecho ">>> Selecting root size"
@@ -500,8 +509,16 @@ EOF
   #Enable services
   yecho ">>> Enabling services"
   arch-chroot /mnt systemctl enable NetworkManager #network
-  arch-chroot /mnt systemctl enable fstrim.timer #ssd optimisation
-  arch-chroot /mnt sysctl vm.swappiness=0 #ssd optimisation
+
+  #ssd optimisation
+  if [ -z "$IS_SSD" ]; then
+    yecho "Are you installing Arch on SSD? (y/n)"
+    read -r IS_SSD
+  fi
+  if is_yes "$IS_SSD"; then
+    arch-chroot /mnt systemctl enable fstrim.timer
+    arch-chroot /mnt sysctl vm.swappiness=0
+  fi
   
   mecho "### Install linux step finished"
 }
