@@ -56,7 +56,12 @@ append_conf_param() {
   local new_value="$2"
   local conf_path="$3"
 
-  sed -i "s|^$param_name=\"\(.*\)\"|$param_name=\"\1 $new_value\"|" "$conf_path"
+  #match: PARAM = "value", PARAM= value, PARAM=(value), etc.
+  sed -i -E "
+    s|^($param_name)[[:space:]]*=[[:space:]]*\"([^\"]*)\"|\1=\"\2 $new_value\"|
+    ;s|^($param_name)[[:space:]]*=[[:space:]]*\(([^)]*)\)|\1=(\2 $new_value)|
+    ;s|^($param_name)[[:space:]]*=[[:space:]]*([^\"(][^[:space:]]*)|\1=\2 $new_value|
+  " "$conf_path"
 }
 
 connect_wifi() {
@@ -242,7 +247,7 @@ prepare_disk() {
 # Create user
 # Set LVM settings
 install_linux() {
-  local PROCESSOR REGION CITY LANGUAGE HOSTNAME MKINITCPIO_CONF HOOKS_LINE HOOKS_ARRAY NEW_HOOKS BOOTLOADER_ID LVM_DISK_UUID USER_NAME CHOICE
+  local PROCESSOR REGION CITY LANGUAGE HOSTNAME MKINITCPIO_CONF HOOKS_LINE HOOKS_ARRAY NEW_HOOKS BOOTLOADER_ID LVM_DISK_UUID USER_NAME CHOICE NVIDIA_DRIVER
 
   mecho "### Install linux step"
 
@@ -270,7 +275,7 @@ install_linux() {
   #wireplumber - the pipewire session manager
   #networkmanager - network
   yecho ">>> Installing basic packages"
-  pacstrap /mnt base base-devel linux linux-firmware lvm2 nano sudo git "$PROCESSOR"-ucode grub efibootmgr pipewire pipewire-alsa pipewire-pulse pipewire-jack wireplumber networkmanager
+  pacstrap /mnt base base-devel linux linux-firmware linux-headers lvm2 nano sudo git "$PROCESSOR"-ucode grub efibootmgr pipewire pipewire-alsa pipewire-pulse pipewire-jack wireplumber networkmanager
 
   #Generate instructions for mounting disks as they are now
   yecho ">>> Generating mount config"
@@ -414,19 +419,24 @@ install_linux() {
     arch-chroot /mnt pacman -S --needed bluez bluez-utils
     arch-chroot /mnt systemctl enable bluetooth
   fi
-  
-  #Install disks extra
-  yecho ">>> Installing disks extra"
-  arch-chroot /mnt pacman -S --needed nfs-utils ntfs-3g exfatprogs
-    
-  #Install video drivers
-  yecho ">>> Installing video drivers"
+
+  #Add multilib
+  yecho ">>> Adding multilib"
   echo "[multilib]" >> /mnt/etc/pacman.conf
   echo "Include = /etc/pacman.d/mirrorlist" >> /mnt/etc/pacman.conf
   arch-chroot /mnt pacman -Syu
 
+  #Install yay aur
+  yecho ">>> Installing yay"
+arch-chroot /mnt /bin/bash <<'EOF'
+  su - "$USER_NAME" -c "git clone https://aur.archlinux.org/yay.git /tmp/yay"
+  su - "$USER_NAME" -c "cd /tmp/yay && makepkg -si --noconfirm"
+EOF
+
+  #Install video drivers
+  yecho ">>> Installing video drivers"
+
   #https://wiki.archlinux.org/title/Intel_graphics
-  CHOICE=""
   yecho "Do you need Intel video driver? {y/N):"
   read -r CHOICE
   if is_yes "$CHOICE"; then
@@ -434,23 +444,39 @@ install_linux() {
   fi
 
   #https://wiki.archlinux.org/title/AMDGPU
-  CHOICE=""
   yecho "Do you need AMD video driver? {y/N):"
   read -r CHOICE
   if is_yes "$CHOICE"; then
     arch-chroot /mnt pacman -S --needed mesa lib32-mesa vulkan-radeon lib32-vulkan-radeon xf86-video-amdgpu
   fi
 
-  #https://wiki.archlinux.org/title/Nouveau
-  CHOICE=""
-  yecho "Do you need Nvidia video driver? {y/N):"
+  #README_NVIDIA
+  #https://wiki.archlinux.org/title/NVIDIA
+  yecho "Do you need Nvidia video driver? (y/N):"
   read -r CHOICE
   if is_yes "$CHOICE"; then
-    arch-chroot /mnt pacman -S --needed mesa lib32-mesa vulkan-nouveau lib32-vulkan-nouveau xf86-video-nouveau
+
+    yecho "Is your videocard RTX 2060+? (y/n):"
+    read -r CHOICE
+    if is_yes "$CHOICE"; then
+      NVIDIA_DRIVER="nvidia-open-dkms"
+    else
+      yecho "Installing driver for GeForce 750+"
+      NVIDIA_DRIVER="nvidia-dkms"
+    fi
+
+    arch-chroot /mnt pacman -S --needed "$NVIDIA_DRIVER" nvidia-utils lib32-nvidia-utils
+    arch-chroot /mnt yay -S nvidia-settings
+
+    #some must have settings
+    append_conf_param "GRUB_CMDLINE_LINUX" "nvidia-drm.modeset=1 nvidia-drm.fbdev=1" "/mnt/etc/default/grub"
+    arch-chroot /mnt grub-mkconfig -o /boot/grub/grub.cfg
+
+    append_conf_param "MODULES" "nvidia nvidia_modeset nvidia_uvm nvidia_drm" "/mnt/etc/mkinitcpio.conf"
+    arch-chroot /mnt mkinitcpio -P
 
     #https://wiki.archlinux.org/title/PRIME
-    CHOICE=""
-    yecho "Do you PRIME for hybrid system? {y/N):"
+    yecho "Do you PRIME for hybrid system? (y/N):"
     read -r CHOICE
     if is_yes "$CHOICE"; then
       echo '# Enable runtime PM for NVIDIA VGA/3D controller devices on driver bind' >> /mnt/etc/udev/rules.d/80-nvidia-pm.rules
@@ -461,8 +487,7 @@ install_linux() {
       echo 'ACTION=="unbind", SUBSYSTEM=="pci", ATTR{vendor}=="0x10de", ATTR{class}=="0x030000", TEST=="power/control", ATTR{power/control}="on"' >> /mnt/etc/udev/rules.d/80-nvidia-pm.rules
       echo 'ACTION=="unbind", SUBSYSTEM=="pci", ATTR{vendor}=="0x10de", ATTR{class}=="0x030200", TEST=="power/control", ATTR{power/control}="on"' >> /mnt/etc/udev/rules.d/80-nvidia-pm.rules
 
-      CHOICE=""
-      yecho "Is the videocard Ampere+? {y/N):"
+      yecho "Is the videocard RTX 3060+? (y/N):"
       read -r CHOICE
       if is_yes "$CHOICE"; then
         echo 'options nvidia "NVreg_DynamicPowerManagement=0x03"' >> /mnt/etc/modprobe.d/nvidia-pm.conf
