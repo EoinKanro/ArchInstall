@@ -590,16 +590,17 @@ install_hyprland() {
   # nemo: Cinnamon file manager
   # nemo-fileroller: extension for archives
   # nm-applet: gui for network manager
-  yecho ">>> Additional packages installation"
-  recho "Don't install it if you are going to use dotfiles like end_4's Hyprland dotfiles"
-  recho "https://github.com/end-4/dots-hyprland"
-  arch-chroot /mnt pacman -S --needed hypridle hyprlock hyprcursor xdg-desktop-portal-hyprland hyprpolkitagent qt6-wayland hyprland-qt-support noto-fonts noto-fonts-cjk noto-fonts-emoji noto-fonts-extra rofi hyprpicker nemo nemo-fileroller nm-applet
+#  yecho ">>> Additional packages installation"
+#  recho "Don't install it if you are going to use dotfiles like end_4's Hyprland dotfiles"
+#  recho "https://github.com/end-4/dots-hyprland"
+#  arch-chroot /mnt pacman -S --needed hypridle hyprlock hyprcursor xdg-desktop-portal-hyprland hyprpolkitagent qt6-wayland hyprland-qt-support noto-fonts noto-fonts-cjk noto-fonts-emoji noto-fonts-extra rofi hyprpicker nemo nemo-fileroller nm-applet
 
   #todo https://wiki.hypr.land/Useful-Utilities/Clipboard-Managers/ clipse?
   #todo https://wiki.hypr.land/Hypr-Ecosystem/hypridle/
   #todo https://wiki.hypr.land/Hypr-Ecosystem/hyprcursor/
 
   yecho "For customization you can read wiki: https://wiki.hypr.land/Configuring/"
+  yecho "Or install dont files like caelestia or end_4's Hyprland"
 }
 
 install_desktop() {
