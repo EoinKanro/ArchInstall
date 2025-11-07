@@ -89,17 +89,21 @@ connect_wifi() {
     return 1
   fi
 
-  yecho ">>> Waiting wifi connection..."
   local i=0
-  while ! ip addr show "$WIFI_DEVICE" | grep -q "inet "; do
-    sleep 1
+  {
+    echo $i
+    while ! ip addr show "$WIFI_DEVICE" | grep -q "inet "; do
+        sleep 1
 
-    ((i++))
-    if (( i > 10 )); then
-      return 1
-    fi
-  done
+        ((i++))
+        echo $((i * 10))
+        if (( i > 10 )); then
+          return 1
+        fi
+      done
 
+      echo 100
+  } | whiptail --gauge "Connecting to Wi-Fi..." 6 50 0
   clear
 }
 
