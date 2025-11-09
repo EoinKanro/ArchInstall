@@ -1,9 +1,5 @@
 WI_FI_TITLE="Wi-Fi"
-
-#-------------- echo --------------
-yecho() {
-  echo -e "\e[33m$1\e[0m"
-}
+DISK_TITLE="Disk"
 
 #-------------- whiptail functions --------------
 CHOICE=""
@@ -48,30 +44,35 @@ connect_wifi() {
   fi
 
   #power on wifi
-  if ! power_on_iwctl "adapter"; then
+  local NETWORK_DEVICES=$(networkctl list | awk 'NR>1 && NF > 0 && $0 !~ /links listed/ {print $2}')
+  if [ -z "$NETWORK_DEVICES" ]; then
+    critical_error "$WI_FI_TITLE" "Error. Can't find network devices"
     return 1
   fi
 
-  if ! power_on_iwctl "device"; then
-    if [ $EXIT_STATUS -eq 1 ]; then
-        EXIT_STATUS=0
-    fi
+  read_menu_options "${NETWORK_DEVICES[@]}"
+  menu "$WI_FI_TITLE" "Select network device:"
+  local WIFI_DEVICE="$CHOICE"
+  if [ $EXIT_STATUS == 1 ]; then
     return 1
   fi
-  local WIFI_DEVICE="$CHOICE"
+
+  if ! networkctl up "$WIFI_DEVICE"; then
+    message "$WI_FI_TITLE" "Can't switch on device: $WIFI_DEVICE"
+    return 1
+  fi
 
   #wifi name
-  iwctl station "$WIFI_DEVICE" scan >> /dev/null
-  local ENTRIES=$(iwctl station "$WIFI_DEVICE" get-networks | awk 'NR>4 { if (NF > 3) print $2; else print $1 }' | sed '/^$/d')
-  if [ -z "$ENTRIES" ]; then
+  local NETWORKS=$(iw dev "$WIFI_DEVICE" scan | grep "SSID:" | awk 'NF>0 {print $2}')
+  if [ -z "$NETWORKS" ]; then
       message "$WI_FI_TITLE" "Error. Can't find networks"
       return 1
   fi
 
-  read_menu_options "${ENTRIES[@]}"
+  read_menu_options "${NETWORKS[@]}"
   menu "$WI_FI_TITLE" "Select network:"
   local WIFI_NAME="$CHOICE"
-  if [ $EXIT_STATUS -eq 1 ]; then
+  if [ $EXIT_STATUS == 1 ]; then
     EXIT_STATUS=0
     return 1
   fi
@@ -79,7 +80,7 @@ connect_wifi() {
   #password
   password "$WI_FI_TITLE" "Enter password for the network:"
   local WIFI_PASSWORD="$CHOICE"
-  if [ $EXIT_STATUS -eq 1 ]; then
+  if [ $EXIT_STATUS == 1 ]; then
       EXIT_STATUS=0
       return 1
   fi
@@ -93,18 +94,17 @@ connect_wifi() {
   {
     echo $i
     while ! ip addr show "$WIFI_DEVICE" | grep -q "inet "; do
-        sleep 1
+      sleep 1
 
-        ((i++))
-        echo $((i * 10))
-        if (( i > 10 )); then
-          return 1
-        fi
-      done
+      ((i++))
+      echo $((i * 10))
+      if (( i > 10 )); then
+        return 1
+      fi
+    done
 
-      echo 100
+    echo 100
   } | whiptail --gauge "Connecting to Wi-Fi..." 6 50 0
-  clear
 }
 
 check_ping() {
@@ -113,28 +113,14 @@ check_ping() {
   fi
 }
 
-#adapter/device
-power_on_iwctl() {
-    local ENTRIES=$(iwctl "$1" list | awk 'NR>3 {print $2}' | sed '/^$/d')
-    if [ -z "$ENTRIES" ]; then
-      critical_error "$WI_FI_TITLE" "Critical error. Can't find $1"
-      return 1
-    fi
-
-    read_menu_options "${ENTRIES[@]}"
-    menu "$WI_FI_TITLE" "Select $1:"
-    if [ $EXIT_STATUS -eq 1 ]; then
-        return 1
-    fi
-
-    if ! iwctl "$1" "$CHOICE" set-property Powered on >> /dev/null; then
-      return 1
-    fi
+#-------------- Disk --------------
+format_disk() {
+  echo "test"
 }
 
 #Check network
 while ! connect_wifi; do
-  if [ $EXIT_STATUS -eq 1 ]; then
+  if [ $EXIT_STATUS == 1 ]; then
     exit -1
   fi
   message "$WI_FI_TITLE" "Connection has not been established."
