@@ -46,6 +46,11 @@ append_conf_param() {
   " "$conf_path"
 }
 
+unmount_all() {
+  swapoff -a
+  umount -R /mnt
+}
+
 #-------------- whiptail functions --------------
 CHOICE=""
 MENU_ITEMS=()
@@ -100,7 +105,7 @@ connect_wifi() {
   fi
 
   #power on wifi
-  local NETWORK_DEVICES=$(networkctl list | awk "NR>1 && NF > 0 && $0 !~ /links listed/ {print $2}")
+  local NETWORK_DEVICES=$(networkctl list | awk 'NR>1 && NF > 0 && $0 !~ /links listed/ {print $2}')
   if [ -z "$NETWORK_DEVICES" ]; then
     critical_error "$WI_FI_TITLE" "ERROR. Can't find network devices"
     return 1
@@ -119,7 +124,7 @@ connect_wifi() {
   fi
 
   #wifi name
-  local NETWORKS=$(iw dev "$WIFI_DEVICE" scan | grep "SSID:" | awk "NF>0 {print $2}")
+  local NETWORKS=$(iw dev "$WIFI_DEVICE" scan | grep "SSID:" | awk 'NF>0 {print $2}')
   if [ -z "$NETWORKS" ]; then
       message "$WI_FI_TITLE" "ERROR. Can't find networks"
       return 1
@@ -246,12 +251,16 @@ format_disk() {
   fi
 
   #process
-  #deactivate all LVMs if exist or wipefs will not work
+  #deactivate all swap, LVMs, LUKS if exist or sgdisk will not work
+  swapoff -a
   vgchange -an
+  cryptsetup luksClose /dev/mapper/*
+
+  #todo delete vgs and pv
 
   #erasing
   if ! {
-    wipefs -a "$DISK_PATH" &&
+    wipefs -af "$DISK_PATH" &&
     sgdisk --zap-all "$DISK_PATH"
   }; then
     critical_error "$DISK_TITLE" "ERROR. Can't erase disk"
@@ -296,9 +305,9 @@ format_disk() {
   fi
 
   #LVM
-  local VG_NAME="vg0"
+  local VG_NAME="vgarch$(openssl rand -hex 5)"
   if ! {
-    pvcreate "$ROOT_VOLUME" &&
+    pvcreate -ff -y "$ROOT_VOLUME" &&
     vgcreate "$VG_NAME" "$ROOT_VOLUME" &&
     lvcreate -L "$SWAP_SIZE"G "$VG_NAME" -n swap &&
     lvcreate -L "$ROOT_SIZE"G "$VG_NAME" -n root &&
@@ -344,7 +353,7 @@ format_disk() {
 
 #-------------- Core --------------
 install_core() {
-  local ADM="amd"
+  local AMD="amd"
   local INTEL="intel"
   local NVIDIA="nvidia"
   local OTHER="other"
@@ -356,7 +365,7 @@ install_core() {
   MENU_ITEMS+=("$AMD" "")
   MENU_ITEMS+=("$INTEL" "")
   MENU_ITEMS+=("$OTHER" "")
-  menu "$CORE_TITLE" "Choose your processor manufacturer:"
+  menu "$CORE_TITLE" "Choose your CPU manufacturer:"
   local PROCESSOR="$CHOICE"
   if [ $EXIT_STATUS == 1 ]; then
       return 1
@@ -410,16 +419,20 @@ install_core() {
 
   #time zone
   local ZONE_DIR="/usr/share/zoneinfo"
-  local ZONE_INFO=($(find "$MNT""$ZONE_DIR" -mindepth 1 -maxdepth 1 -type d -printf "%f\n" | sort))
-  read_menu_options "${ZONE_INFO[@]}"
+  MENU_ITEMS=()
+  while read -r LINE; do
+      MENU_ITEMS+=("$LINE" "")
+  done < <(find "$MNT""$ZONE_DIR" -mindepth 1 -maxdepth 1 -type d -printf "%f\n" | sort)
   menu "$CORE_TITLE" "Choose your region:"
   local REGION="$CHOICE"
   if [ $EXIT_STATUS == 1 ]; then
     return 1
   fi
 
-  ZONE_INFO=($(find "$MNT""$ZONE_DIR/$REGION" -mindepth 1 -maxdepth 1 -type f -printf "%f\n" | sort))
-  read_menu_options "${ZONE_INFO[@]}"
+  MENU_ITEMS=()
+  while read -r LINE; do
+    MENU_ITEMS+=("$LINE" "")
+  done < <(find "$MNT""$ZONE_DIR/$REGION" -mindepth 1 -maxdepth 1 -type f -printf "%f\n" | sort)
   menu "$CORE_TITLE" "Choose your city:"
   local CITY="$CHOICE"
   if [ $EXIT_STATUS == 1 ]; then
@@ -454,7 +467,7 @@ install_core() {
   fi
 
   #keyboard language
-  local LANGUAGE_KEYBOARD=$(echo "$LANGUAGE" | awk "{print $1}")
+  local LANGUAGE_KEYBOARD=$(echo "$LANGUAGE" | awk '{print $1}')
   echo "LANG=$LANGUAGE_KEYBOARD" > "$MNT/etc/locale.conf"
 
   #hostname
@@ -495,48 +508,52 @@ install_core() {
   arch-chroot "$MNT" git clone https://aur.archlinux.org/yay.git "$TEMP_DIR_YAY"
   arch-chroot "$MNT" chown -R "$USERNAME" "$TEMP_DIR"
   arch-chroot "$MNT" su - "$USERNAME" -c "makepkg -f -D $TEMP_DIR_YAY"
-  PACKAGE=$(ls "$MNT""$TEMP_DIR_YAY" | grep "pkg.tar.zst" | grep -v debug)
+  local PACKAGE=$(ls "$MNT""$TEMP_DIR_YAY" | grep "pkg.tar.zst" | grep -v debug)
   if ! arch-chroot "$MNT" pacman -U --noconfirm "$TEMP_DIR_YAY/$PACKAGE" ; then
     critical_error "$CORE_TITLE" "ERROR. Can't install yay package manager"
     return 1
   fi
   rm -rf "$MNT""$TEMP_DIR"
 
-  #encryption settings
-  if [ $DISK_ENCRYPT == 0 ]; then
-    #enable kernel module
-    HOOKS_LINE=$(grep "^HOOKS=" "$MKINITCPIO_CONF")
+  #enable LVM and LUKS optional kernel modules
+  local HOOKS_LINE=$(grep "^HOOKS=" "$MKINITCPIO_CONF")
 
-    if [[ -z "$HOOKS_LINE" ]]; then
-      critical_error "$CORE_TITLE" "ERROR. Cant' install encryption hooks"
-      return 1
+  if [[ -z "$HOOKS_LINE" ]]; then
+    critical_error "$CORE_TITLE" "ERROR. Cant' enable kernel modules"
+    return 1
+  fi
+
+  # Strip HOOKS=(...) into array
+  local HOOKS_ARRAY=($(echo "$HOOKS_LINE" | sed -E "s/^HOOKS=\((.*)\)/\1/"))
+  # Rebuild new array, injecting encrypt + lvm2 before filesystems
+  local NEW_HOOKS=()
+
+  local LVM_MODULE="lvm2"
+  local LUKS_MODULE="encrypt"
+  for h in "${HOOKS_ARRAY[@]}"; do
+    #skip encrypt lvm2 if exist
+    if [[ "$h" == "$LUKS_MODULE" || "$h" == "$LVM_MODULE" ]]; then
+      continue
     fi
 
-    # Strip HOOKS=(...) into array
-    HOOKS_ARRAY=($(echo "$HOOKS_LINE" | sed -E "s/^HOOKS=\((.*)\)/\1/"))
-
-    # Rebuild new array, injecting encrypt + lvm2 before filesystems
-    NEW_HOOKS=()
-
-    for h in "${HOOKS_ARRAY[@]}"; do
-      #skip encrypt lvm2 if exist
-      if [[ "$h" == "encrypt" || "$h" == "lvm2" ]]; then
-        continue
+    if [[ "$h" == "filesystems" ]]; then
+      if [ "$DISK_ENCRYPT" == 0 ]; then
+        NEW_HOOKS+=("$LUKS_MODULE")
       fi
+      NEW_HOOKS+=("$LVM_MODULE")
+    fi
 
-      if [[ "$h" == "filesystems" ]]; then
-        NEW_HOOKS+=("encrypt")
-        NEW_HOOKS+=("lvm2")
-      fi
+    NEW_HOOKS+=("$h")
+  done
 
-      NEW_HOOKS+=("$h")
-    done
+  #Write result
+  replace_conf_param "HOOKS" "(${NEW_HOOKS[*]})" "$MKINITCPIO_CONF"
 
-    #Write result
-    replace_conf_param "HOOKS" "(${NEW_HOOKS[*]})" "$MKINITCPIO_CONF"
-
+  #encryption settings
+  if [ $DISK_ENCRYPT == 0 ]; then
     #enable opening encrypted disk on loading
-    LVM_DISK_UUID=$(blkid -s UUID -o value "$ROOT_PART")
+    local LVM_DISK_UUID=$(blkid -s UUID -o value "$ROOT_PART")
+    #todo do I need something without encryption? disk can't be mounted on startup
     append_conf_param "GRUB_CMDLINE_LINUX" "cryptdevice=UUID=$LVM_DISK_UUID:cryptlvm" "$GRUB_DEFAULT"
   fi
 
@@ -546,7 +563,7 @@ install_core() {
   MENU_ITEMS+=("$INTEL" "")
   MENU_ITEMS+=("$NVIDIA" "")
   MENU_ITEMS+=("$OTHER" "")
-  menu "$CORE_TITLE" "Choose video card vendor:"
+  menu "$CORE_TITLE" "Choose GPU manufacturer:"
   local GPU="$CHOICE"
   if [ $EXIT_STATUS == 1 ]; then
     return 1
@@ -556,11 +573,11 @@ install_core() {
     local GPU_PACKAGES=""
     #https://wiki.archlinux.org/title/AMDGPU
     if [ "$GPU" == "$AMD" ]; then
-      GPU_PACKAGES="mesa lib32-mesa vulkan-radeon lib32-vulkan-radeon xf86-video-amdgpu"
+      GPU_PACKAGES=(mesa lib32-mesa vulkan-radeon lib32-vulkan-radeon xf86-video-amdgpu)
 
     #https://wiki.archlinux.org/title/Intel_graphics
     elif [ "$GPU" == "$INTEL" ]; then
-      GPU_PACKAGES="mesa lib32-mesa vulkan-intel lib32-vulkan-intel"
+      GPU_PACKAGES=(mesa lib32-mesa vulkan-intel lib32-vulkan-intel)
 
     #README_NVIDIA
     #https://wiki.archlinux.org/title/NVIDIA
@@ -575,7 +592,7 @@ install_core() {
         NVIDIA_DRIVER="nvidia-dkms"
       fi
 
-      GPU_PACKAGES="$NVIDIA_DRIVER nvidia-utils lib32-nvidia-utils"
+      GPU_PACKAGES=("$NVIDIA_DRIVER" nvidia-utils lib32-nvidia-utils)
 
       #some must have settings
       append_conf_param "GRUB_CMDLINE_LINUX" "nvidia-drm.modeset=1 nvidia-drm.fbdev=1" "$GRUB_DEFAULT"
@@ -613,23 +630,20 @@ install_core() {
       fi
     fi
 
-    if ! arch-chroot "$MNT" pacman -S --needed --noconfirm "$GPU_PACKAGES" ; then
+    if ! arch-chroot "$MNT" pacman -S --needed --noconfirm "${GPU_PACKAGES[@]}" ; then
       critical_error "$CORE_TITLE" "ERROR. Can't install video drivers"
       return 1
     fi
   fi
 
   #re-generating initramfs
-  if ! arch-chroot "$MNT" mkinitcpio -P ; then
-    critical_error "$CORE_TITLE" "ERROR. Can't re-generate initramfs"
-    return 1
-  fi
+  arch-chroot "$MNT" mkinitcpio -P
 
   #installing bootloader
   if ! {
     arch-chroot "$MNT" grub-install --target=x86_64-efi --efi-directory=/boot --bootloader-id="$HOSTNAME" &&
-    mkdir "$MNT/boot/EFI/BOOT" &&
-    cp "$MNT/boot/EFI/$BOOTLOADER_ID/grubx64.efi" "$MNT/boot/EFI/BOOT/BOOTX64.EFI" &&
+    mkdir -p "$MNT/boot/EFI/BOOT" &&
+    cp "$MNT/boot/EFI/$HOSTNAME/grubx64.efi" "$MNT/boot/EFI/BOOT/BOOTX64.EFI" &&
     arch-chroot "$MNT" grub-mkconfig -o /boot/grub/grub.cfg
   }; then
     critical_error "$CORE_TITLE" "ERROR. Can't setup bootloader"
@@ -644,6 +658,8 @@ install_core() {
     arch-chroot "$MNT" systemctl enable fstrim.timer
     echo "vm.swappiness=0" > "$MNT/etc/sysctl.d/swappiness.conf"
   fi
+
+  #todo firewall, etc
 }
 
 #Check network
@@ -657,6 +673,7 @@ done
 #Prepare disk
 while ! format_disk; do
   if [ $EXIT_STATUS == 1 ]; then
+    unmount_all
     exit -1
   fi
   message "$DISK_TITLE" "Disk has not been prepared."
@@ -664,6 +681,10 @@ done
 
 #Install core
 while ! install_core; do
+  if [ $EXIT_STATUS == 1 ]; then
+    unmount_all
+    exit -1
+  fi
   message "$CORE_TITLE" "Linux core has not been installed."
 done
 
