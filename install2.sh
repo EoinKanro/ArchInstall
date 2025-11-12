@@ -254,16 +254,31 @@ format_disk() {
   #deactivate all swap, LVMs, LUKS if exist or sgdisk will not work
   swapoff -a
   vgchange -an
-  cryptsetup luksClose /dev/mapper/*
+  cryptsetup close /dev/mapper/*
 
-  #todo delete vgs and pv
+  #init partition names
+  local EFI_PART=""
+  if is_nvme "$DISK_PATH"; then
+    EFI_PART="${DISK_PATH}p1"
+    ROOT_PART="${DISK_PATH}p2"
+  else
+    EFI_PART="${DISK_PATH}1"
+    ROOT_PART="${DISK_PATH}2"
+  fi
+  local ROOT_VOLUME="$ROOT_PART"
+
+  #remove old vgs on the disk
+  for VG in $(pvs --noheadings -o pv_name,vg_name | grep "$ROOT_PART" | awk '{print $2}'); do
+    vgremove -ff -y "$VG"
+  done
+  pvremove -ff -y "$ROOT_PART"
 
   #erasing
   if ! {
     wipefs -af "$DISK_PATH" &&
     sgdisk --zap-all "$DISK_PATH"
   }; then
-    critical_error "$DISK_TITLE" "ERROR. Can't erase disk"
+    critical_error "$DISK_TITLE" "ERROR. Can't erase disk. Try reboot"
     return 1
   fi
 
@@ -276,24 +291,13 @@ format_disk() {
     #LUKS\LVM rest
     parted -s "$DISK_PATH" mkpart primary 1025MiB 100%
   }; then
-    critical_error "$DISK_TITLE" "ERROR. Can't create partitions"
+    critical_error "$DISK_TITLE" "ERROR. Can't create partitions. Try reboot"
     return 1
   fi
 
-  #creating LVM and LUKS optional
-  local EFI_PART=""
-  if is_nvme "$DISK_PATH"; then
-    EFI_PART="${DISK_PATH}p1"
-    ROOT_PART="${DISK_PATH}p2"
-  else
-    EFI_PART="${DISK_PATH}1"
-    ROOT_PART="${DISK_PATH}2"
-  fi
-  local ROOT_VOLUME="$ROOT_PART"
-
-  #LUKS
+  #LUKS optional
   if [ $DISK_ENCRYPT == 0 ]; then
-    local CRYPT_NAME="cryptlvm"
+    local CRYPT_NAME="cryptlvm$(openssl rand -hex 3)"
     if ! {
       cryptsetup luksFormat "$ROOT_VOLUME" &&
       cryptsetup --perf-no_read_workqueue --perf-no_write_workqueue --persistent open "$ROOT_VOLUME" "$CRYPT_NAME"
@@ -305,7 +309,7 @@ format_disk() {
   fi
 
   #LVM
-  local VG_NAME="vgarch$(openssl rand -hex 5)"
+  local VG_NAME="vgarch$(openssl rand -hex 3)"
   if ! {
     pvcreate -ff -y "$ROOT_VOLUME" &&
     vgcreate "$VG_NAME" "$ROOT_VOLUME" &&
@@ -339,11 +343,11 @@ format_disk() {
   fi
 
   if ! {
-    mount -o "$MOUNT_OPTIONS" "$VG_ROOT_PART" /mnt &&
-    mkdir /mnt/home &&
-    mount -o "$MOUNT_OPTIONS" "$VG_HOME_PART" /mnt/home &&
-    mkdir /mnt/boot &&
-    mount "$EFI_PART" /mnt/boot &&
+    mount -o "$MOUNT_OPTIONS" "$VG_ROOT_PART" "$MNT" &&
+    mkdir "$MNT/home" &&
+    mount -o "$MOUNT_OPTIONS" "$VG_HOME_PART" "$MNT/home" &&
+    mkdir "$MNT/boot" &&
+    mount "$EFI_PART" "$MNT/boot" &&
     swapon "$VG_SWAP_PART";
   }; then
     critical_error "$DISK_TITLE" "ERROR. Can't mount partitions"
@@ -373,6 +377,7 @@ install_core() {
 
   #base linux linux-firmware linux-headers - core
   #base-devel go - base development stuff
+  #lvm2 - for loading logical volumes
   #grub efibootmgr - bootloader
   #networkmanager - network
   #pipewire pipewire-alsa pipewire-pulse pipewire-jack - audio
@@ -380,7 +385,7 @@ install_core() {
   #sudo - for sudo users
   #nano - my favorite editor
   #git - well, git
-  if ! pacstrap "$MNT" base linux linux-firmware linux-headers base-devel go grub efibootmgr networkmanager pipewire pipewire-alsa pipewire-pulse pipewire-jack wireplumber sudo nano git; then
+  if ! pacstrap "$MNT" base linux linux-firmware linux-headers base-devel lvm2 go grub efibootmgr networkmanager pipewire pipewire-alsa pipewire-pulse pipewire-jack wireplumber sudo nano git; then
     critical_error "$CORE_TITLE" "ERROR. Can't install core packages"
     return 1
   fi
@@ -393,10 +398,10 @@ install_core() {
     fi
   fi
 
-  #lvm2 - for loading logical volumes
-  if [ "$DISK_ENCRYPT" == 0 ]; then
-    if ! pacstrap "$MNT" lvm2 ; then
-      critical_error "$CORE_TITLE" "ERROR. Can't install encryption package"
+  #cryptsetup - for disk encryption
+  if [ $DISK_ENCRYPT == 0 ]; then
+    if ! pacstrap "$MNT" cryptsetup ; then
+      critical_error "$CORE_TITLE" "ERROR. Can't install cryptsetup"
       return 1
     fi
   fi
@@ -523,28 +528,56 @@ install_core() {
     return 1
   fi
 
-  # Strip HOOKS=(...) into array
-  local HOOKS_ARRAY=($(echo "$HOOKS_LINE" | sed -E "s/^HOOKS=\((.*)\)/\1/"))
-  # Rebuild new array, injecting encrypt + lvm2 before filesystems
+  #rebuilding modules
+  #https://wiki.archlinux.org/title/Mkinitcpio
+  local SYSTEMD="systemd"
+  local UDEV="udev"
+  MENU_ITEMS=()
+  MENU_ITEMS+=("$SYSTEMD" "new, default")
+  MENU_ITEMS+=("$UDEV" "old, reliable")
+  menu "$CORE_TITLE" "Choose your devices processor:"
+  if [ $EXIT_STATUS == 1 ]; then
+      return 1
+  fi
+
   local NEW_HOOKS=()
+  local USE_UDEV=1
+  if [ "$CHOICE" == "$UDEV" ]; then
+    USE_UDEV=0
+  fi
 
-  local LVM_MODULE="lvm2"
-  local LUKS_MODULE="encrypt"
-  for h in "${HOOKS_ARRAY[@]}"; do
-    #skip encrypt lvm2 if exist
-    if [[ "$h" == "$LUKS_MODULE" || "$h" == "$LVM_MODULE" ]]; then
-      continue
+  #complete rebuild bcz there was a bug where default hooks
+  #contained modules for udev and systemd at the same time
+  NEW_HOOKS+=("base")
+  if [ $USE_UDEV == 0 ]; then
+    NEW_HOOKS+=("udev")
+  else
+    NEW_HOOKS+=("$SYSTEMD")
+  fi
+  NEW_HOOKS+=("autodetect")
+  if ! [ "$PROCESSOR" == "$OTHER" ]; then
+    NEW_HOOKS+=("microcode")
+  fi
+  NEW_HOOKS+=("modconf")
+  NEW_HOOKS+=("kms")
+  NEW_HOOKS+=("keyboard")
+  if [ $USE_UDEV == 0 ]; then
+    NEW_HOOKS+=("keymap")
+    NEW_HOOKS+=("consolefont")
+  else
+    NEW_HOOKS+=("sd-vconsole")
+  fi
+  NEW_HOOKS+=("block")
+  if [ $DISK_ENCRYPT == 0 ]; then
+    if [ $USE_UDEV == 0 ]; then
+      NEW_HOOKS+=("encrypt")
+    else
+      NEW_HOOKS+=("sd-encrypt")
     fi
-
-    if [[ "$h" == "filesystems" ]]; then
-      if [ "$DISK_ENCRYPT" == 0 ]; then
-        NEW_HOOKS+=("$LUKS_MODULE")
-      fi
-      NEW_HOOKS+=("$LVM_MODULE")
-    fi
-
-    NEW_HOOKS+=("$h")
-  done
+  fi
+  NEW_HOOKS+=("lvm2")
+  NEW_HOOKS+=("filesystems")
+  NEW_HOOKS+=("fsck")
 
   #Write result
   replace_conf_param "HOOKS" "(${NEW_HOOKS[*]})" "$MKINITCPIO_CONF"
@@ -553,7 +586,6 @@ install_core() {
   if [ $DISK_ENCRYPT == 0 ]; then
     #enable opening encrypted disk on loading
     local LVM_DISK_UUID=$(blkid -s UUID -o value "$ROOT_PART")
-    #todo do I need something without encryption? disk can't be mounted on startup
     append_conf_param "GRUB_CMDLINE_LINUX" "cryptdevice=UUID=$LVM_DISK_UUID:cryptlvm" "$GRUB_DEFAULT"
   fi
 
@@ -570,7 +602,7 @@ install_core() {
   fi
 
   if ! [ -z "$GPU" ] && ! [ "$GPU" == "$OTHER" ]; then
-    local GPU_PACKAGES=""
+    local GPU_PACKAGES=()
     #https://wiki.archlinux.org/title/AMDGPU
     if [ "$GPU" == "$AMD" ]; then
       GPU_PACKAGES=(mesa lib32-mesa vulkan-radeon lib32-vulkan-radeon xf86-video-amdgpu)
@@ -624,13 +656,16 @@ install_core() {
         fi
       fi
 
-      if ! arch-chroot "$MNT" yay -S nvidia-settings ; then
+      if ! arch-chroot "$MNT" yay -S --noconfirm nvidia-settings ; then
         critical_error "$CORE_TITLE" "ERROR. Can't install nvidia utils"
         return 1
       fi
     fi
 
-    if ! arch-chroot "$MNT" pacman -S --needed --noconfirm "${GPU_PACKAGES[@]}" ; then
+    if ! {
+      arch-chroot "$MNT" pacman -Syy &&
+      arch-chroot "$MNT" pacman -S --noconfirm "${GPU_PACKAGES[@]}"
+    }; then
       critical_error "$CORE_TITLE" "ERROR. Can't install video drivers"
       return 1
     fi
