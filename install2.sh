@@ -8,6 +8,8 @@ MNT="/mnt"
 DISK_ENCRYPT=1
 DISK_SSD=1
 ROOT_PART=""
+CRYPT_NAME=""
+VG_NAME=""
 
 #-------------- utils --------------
 #0/1
@@ -297,7 +299,7 @@ format_disk() {
 
   #LUKS optional
   if [ $DISK_ENCRYPT == 0 ]; then
-    local CRYPT_NAME="cryptlvm$(openssl rand -hex 3)"
+    CRYPT_NAME="cryptlvm$(openssl rand -hex 3)"
     if ! {
       cryptsetup luksFormat "$ROOT_VOLUME" &&
       cryptsetup --perf-no_read_workqueue --perf-no_write_workqueue --persistent open "$ROOT_VOLUME" "$CRYPT_NAME"
@@ -309,7 +311,7 @@ format_disk() {
   fi
 
   #LVM
-  local VG_NAME="vgarch$(openssl rand -hex 3)"
+  VG_NAME="vgarch$(openssl rand -hex 3)"
   if ! {
     pvcreate -ff -y "$ROOT_VOLUME" &&
     vgcreate "$VG_NAME" "$ROOT_VOLUME" &&
@@ -418,9 +420,9 @@ install_core() {
   echo "Include = /etc/pacman.d/mirrorlist" >> "$PACMAN_CONF"
 
   #update mirrors and packages database
-  arch-chroot "$MNT" pacman -S reflector
-  arch-chroot "$MNT" reflector --protocol https --age 12 --completion-percent 97 --latest 100 --score 7 --sort rate --verbose --connection-timeout 180 --download-timeout 180 --save /etc/pacman.d/mirrorlist
   arch-chroot "$MNT" pacman -Syy
+  arch-chroot "$MNT" pacman -Su --noconfirm reflector
+  arch-chroot "$MNT" reflector --protocol https --age 12 --completion-percent 97 --latest 100 --score 7 --sort rate --verbose --connection-timeout 180 --download-timeout 180 --save /etc/pacman.d/mirrorlist
 
   #time zone
   local ZONE_DIR="/usr/share/zoneinfo"
@@ -586,7 +588,12 @@ install_core() {
   if [ $DISK_ENCRYPT == 0 ]; then
     #enable opening encrypted disk on loading
     local LVM_DISK_UUID=$(blkid -s UUID -o value "$ROOT_PART")
-    append_conf_param "GRUB_CMDLINE_LINUX" "cryptdevice=UUID=$LVM_DISK_UUID:cryptlvm" "$GRUB_DEFAULT"
+    if [ $USE_UDEV == 0 ]; then
+      append_conf_param "GRUB_CMDLINE_LINUX" "cryptdevice=UUID=$LVM_DISK_UUID:$CRYPT_NAME" "$GRUB_DEFAULT"
+    else
+      echo "$CRYPT_NAME UUID=$LVM_DISK_UUID none luks" > "$MNT/etc/crypttab.initramfs"
+      append_conf_param "GRUB_CMDLINE_LINUX" "rd.luks.name=$LVM_DISK_UUID=$CRYPT_NAME root=/dev/mapper/$VG_NAME-root" "$GRUB_DEFAULT"
+    fi
   fi
 
   #video drivers
@@ -717,7 +724,6 @@ done
 #Install core
 while ! install_core; do
   if [ $EXIT_STATUS == 1 ]; then
-    unmount_all
     exit -1
   fi
   message "$CORE_TITLE" "Linux core has not been installed."
