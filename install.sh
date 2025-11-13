@@ -12,6 +12,7 @@ DISK_SSD=1
 ROOT_PART=""
 CRYPT_NAME=""
 VG_NAME=""
+USERNAME=""
 
 #-------------- utils --------------
 #0/1
@@ -496,7 +497,7 @@ install_core() {
 
   #new user
   inputbox "$CORE" "Enter username:"
-  local USERNAME="$CHOICE"
+  USERNAME="$CHOICE"
   if [ $EXIT_STATUS == 1 ]; then
     return 1
   fi
@@ -665,7 +666,7 @@ install_core() {
         fi
       fi
 
-      if ! arch-chroot "$MNT" yay -S --noconfirm nvidia-settings ; then
+      if ! arch-chroot "$MNT" su - "$USERNAME" -c "yay -S nvidia-settings" ; then
         critical_error "$CORE_TITLE" "ERROR. Can't install nvidia utils"
         return 1
       fi
@@ -820,8 +821,14 @@ install_apps() {
     fi
   done
 
-  arch-chroot "$MNT" pacman -Sy --noconfirm ${PACMAN_APPS_INSTALL[@]}
-  arch-chroot "$MNT" yay -S --noconfirm ${YAY_APPS_INSTALL[@]}
+  #todo fix yay
+  if ! {
+    arch-chroot "$MNT" pacman -Sy --noconfirm ${PACMAN_APPS_INSTALL[@]} &&
+    arch-chroot "$MNT" su - "$USERNAME" -c "yay -S ${YAY_APPS_INSTALL[@]}"
+  }; then
+    message "$APPS_TITLE" "ERROR. Can't install apps"
+    return 1
+  fi
 }
 
 #Check network
@@ -854,7 +861,7 @@ while ! install_de; do
   if [ $EXIT_STATUS == 1 ]; then
     exit -1
   fi
-  message "$CORE_TITLE" "Desktop environment has not been installed."
+  message "$DE_TITLE" "Desktop environment has not been installed."
 done
 
 #Install additional apps
@@ -862,7 +869,7 @@ while ! install_apps; do
   if [ $EXIT_STATUS == 1 ]; then
     exit -1
   fi
-  message "$CORE_TITLE" "Additional apps have not been installed."
+  message "$APPS_TITLE" "Additional apps have not been installed."
 done
 
 echo "Done. Now you can reboot into your system"
