@@ -63,7 +63,7 @@ EXIT_STATUS=0
 # "${ARGUMENT[@]}"
 read_menu_options() {
   MENU_ITEMS=()
-  for ITEM in $1; do
+  for ITEM in $@; do
     MENU_ITEMS+=("$ITEM" "")
   done
 }
@@ -673,7 +673,7 @@ install_core() {
 
     if ! {
       arch-chroot "$MNT" pacman -Syy &&
-      arch-chroot "$MNT" pacman -S --noconfirm "${GPU_PACKAGES[@]}"
+      arch-chroot "$MNT" pacman -S --noconfirm ${GPU_PACKAGES[@]}
     }; then
       critical_error "$CORE_TITLE" "ERROR. Can't install video drivers"
       return 1
@@ -745,16 +745,27 @@ install_de() {
     # haruna: mediaplayer
     # discover: app manager
     if ! arch-chroot "$MNT" pacman -Sy --needed --noconfirm plasma-desktop plasma-pa plasma-nm plasma-systemmonitor plasma-firewall kscreen kwalletmanager kwallet-pam bluedevil powerdevil power-profiles-daemon kdeplasma-addons xdg-desktop-portal-kde kde-gtk-config breeze-gtk cups print-manager konsole dolphin dolphin-plugins ffmpegthumbs kate okular gwenview ark spectacle haruna discover ; then
-      critical_error "$DE_TITLE" "ERROR. Can't install KDE"
+      message "$DE_TITLE" "ERROR. Can't install KDE"
       return 1
     fi
   else
     # hyprland: base hyprland packages
     # kitty: default terminal
     if ! arch-chroot "$MNT" pacman -Sy --needed --noconfirm hyprland kitty ; then
-      critical_error "$DE_TITLE" "ERROR. Can't install Hyprland"
+      message "$DE_TITLE" "ERROR. Can't install Hyprland"
       return 1
     fi
+  fi
+
+  # ly: minimalistic display manager for choosing desktop environment
+  if ! {
+    arch-chroot "$MNT" pacman -Sy --needed --noconfirm ly &&
+    arch-chroot "$MNT" systemctl enable ly &&
+    replace_conf_param animation "colormix" "$MNT/etc/ly/config.ini" &&
+    replace_conf_param bigclock "en" "$MNT/etc/ly/config.ini"
+  }; then
+    message "$DE_TITLE" "ERROR. Can't install display manager"
+    return 1
   fi
 }
 
@@ -784,7 +795,7 @@ install_apps() {
   MENU_ITEMS+=("noto-fonts-extra" "Fonts" ON)
   #git clone https://github.com/calf-studio-gear/calf.git
 
-  CHOICE=$(whiptail --title "$APPS_TITLE" --checklist "Choose additional apps (use SPACE):" 20 60 12 "${MENU_ITEMS[@]}" 3>&1 1>&2 2>&3)
+  CHOICE=$(whiptail --title "$APPS_TITLE" --checklist "Choose additional apps (use SPACE):" 20 70 12 "${MENU_ITEMS[@]}" 3>&1 1>&2 2>&3)
   EXIT_STATUS=$?
   if [ $EXIT_STATUS == 1 ]; then
     return 1
@@ -809,8 +820,8 @@ install_apps() {
     fi
   done
 
-  arch-chroot "$MNT" pacman -Sy --noconfirm "${PACMAN_APPS_INSTALL[@]}"
-  arch-chroot "$MNT" yay -S --noconfirm "${YAY_APPS_INSTALL[@]}"
+  arch-chroot "$MNT" pacman -Sy --noconfirm ${PACMAN_APPS_INSTALL[@]}
+  arch-chroot "$MNT" yay -S --noconfirm ${YAY_APPS_INSTALL[@]}
 }
 
 #Check network
