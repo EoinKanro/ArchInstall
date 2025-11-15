@@ -551,6 +551,7 @@ install_core() {
     USE_UDEV=0
   fi
 
+  #todo usbhid modules
   #complete rebuild bcz there was a bug where default hooks
   #contained modules for udev and systemd at the same time
   NEW_HOOKS+=("base")
@@ -666,7 +667,7 @@ install_core() {
         fi
       fi
 
-      if ! arch-chroot "$MNT" su - "$USERNAME" -c "yay -S nvidia-settings" ; then
+      if ! arch-chroot "$MNT" sudo -u "$USERNAME" yay -S --noconfirm nvidia-settings ; then
         critical_error "$CORE_TITLE" "ERROR. Can't install nvidia utils"
         return 1
       fi
@@ -821,10 +822,9 @@ install_apps() {
     fi
   done
 
-  #todo fix yay
   if ! {
     arch-chroot "$MNT" pacman -Sy --noconfirm ${PACMAN_APPS_INSTALL[@]} &&
-    arch-chroot "$MNT" su - "$USERNAME" -c "yay -S ${YAY_APPS_INSTALL[@]}"
+    arch-chroot "$MNT" sudo -u "$USERNAME" yay -S --noconfirm ${YAY_APPS_INSTALL[@]}
   }; then
     message "$APPS_TITLE" "ERROR. Can't install apps"
     return 1
