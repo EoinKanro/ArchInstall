@@ -551,7 +551,6 @@ install_core() {
     USE_UDEV=0
   fi
 
-  #todo usbhid modules
   #complete rebuild bcz there was a bug where default hooks
   #contained modules for udev and systemd at the same time
   NEW_HOOKS+=("base")
@@ -598,6 +597,11 @@ install_core() {
       echo "$CRYPT_NAME UUID=$LVM_DISK_UUID none luks" > "$MNT/etc/crypttab.initramfs"
       append_conf_param "GRUB_CMDLINE_LINUX" "rd.luks.name=$LVM_DISK_UUID=$CRYPT_NAME root=/dev/mapper/$VG_NAME-root" "$GRUB_DEFAULT"
     fi
+  fi
+
+  #support usb devices(keyboard) on launch
+  if [ $USE_UDEV == 1 ]; then
+    append_conf_param "MODULES" "usbhid xhci_hcd hid_generic hid_apple" "$MKINITCPIO_CONF"
   fi
 
   #video drivers
