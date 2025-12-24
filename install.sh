@@ -766,7 +766,7 @@ install_de() {
   # ly: minimalistic display manager for choosing desktop environment
   if ! {
     arch-chroot "$MNT" pacman -Sy --needed --noconfirm ly &&
-    arch-chroot "$MNT" systemctl enable ly &&
+    arch-chroot "$MNT" systemctl enable ly@tty2.service &&
     replace_conf_param animation "colormix" "$MNT/etc/ly/config.ini" &&
     replace_conf_param bigclock "en" "$MNT/etc/ly/config.ini"
   }; then
